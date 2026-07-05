@@ -1,0 +1,13 @@
+# Global input + Win32
+pynput>=1.7.6
+pywin32>=306
+
+# HTTP / WebSocket clients for Chrome DevTools Protocol
+requests>=2.31.0
+websockets>=12.0
+
+# GUI
+PyQt6>=6.6.0
+
+# Logging
+loguru>=0.7.2
