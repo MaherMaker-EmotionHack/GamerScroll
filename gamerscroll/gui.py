@@ -123,14 +123,29 @@ class SettingsWindow(QWidget):
         self._port_spin = QSpinBox()
         self._port_spin.setRange(1024, 65535)
         self._port_spin.setValue(9222)
+        self._port_spin.valueChanged.connect(self._update_manual_label)
         browser_layout.addRow("CDP port:", self._port_spin)
 
         self._auto_launch_check = QCheckBox("Launch browser automatically if CDP is not available")
+        self._auto_launch_check.stateChanged.connect(self._update_warning_visibility)
         browser_layout.addRow("", self._auto_launch_check)
 
+        self._auto_launch_warning = QLabel(
+            "Warning: auto-launch will close existing browser windows and reopen them."
+        )
+        self._auto_launch_warning.setWordWrap(True)
+        self._auto_launch_warning.setStyleSheet("color: #c06000; font-size: 11px;")
+        browser_layout.addRow("", self._auto_launch_warning)
+
         launch_btn = QPushButton("Launch Browser Now")
+        launch_btn.setToolTip("Closes existing browser windows and restarts with CDP enabled")
         launch_btn.clicked.connect(self.launch_browser_requested.emit)
         browser_layout.addRow("", launch_btn)
+
+        self._manual_label = QLabel("")
+        self._manual_label.setTextFormat(Qt.TextFormat.RichText)
+        self._manual_label.setWordWrap(True)
+        browser_layout.addRow("", self._manual_label)
 
         layout.addWidget(browser_group)
 
@@ -252,6 +267,7 @@ class SettingsWindow(QWidget):
         else:
             self._exe_edit.setText(self._config.browser_exe)
             self._populate_profiles_from_config()
+        self._update_manual_label()
 
     def _populate_profiles(self, user_data_dir: Path) -> None:
         profiles = list_profiles(user_data_dir)
@@ -282,6 +298,7 @@ class SettingsWindow(QWidget):
         if path:
             self._exe_edit.setText(path)
             self._browser_combo.setCurrentIndex(0)
+            self._update_manual_label()
 
     def _capture_key(self, label: str, target: QLineEdit) -> None:
         dlg = KeyCaptureDialog(label, self)
@@ -301,6 +318,20 @@ class SettingsWindow(QWidget):
         self._log_level_combo.setCurrentText(self._config.log_level.upper())
         self._log_path_label.setText(str(_log_dir() / "gamerscroll.log"))
         self._refresh_browser_list()
+        self._update_warning_visibility()
+        self._update_manual_label()
+
+    def _update_warning_visibility(self) -> None:
+        self._auto_launch_warning.setVisible(self._auto_launch_check.isChecked())
+
+    def _update_manual_label(self) -> None:
+        port = self._port_spin.value()
+        exe = self._exe_edit.text() or "C:\\Path\\To\\browser.exe"
+        text = (
+            "Or launch the browser manually with CDP enabled:<br>"
+            f"<code>\"{exe}\" --profile-directory=Default --remote-debugging-port={port}</code>"
+        )
+        self._manual_label.setText(text)
 
     def _save(self) -> None:
         new_config = Config(

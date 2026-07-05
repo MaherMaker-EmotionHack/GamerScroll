@@ -1,0 +1,22 @@
+# Normalize line endings for text files
+* text=auto eol=crlf
+
+# Treat JSON and Python files as text
+*.json text eol=crlf
+*.py text eol=crlf
+*.md text eol=crlf
+*.txt text eol=crlf
+*.ps1 text eol=crlf
+*.yml text eol=crlf
+*.yaml text eol=crlf
+
+# Treat binary files as binary
+*.exe binary
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.zip binary
+*.pkg binary
+*.pyz binary

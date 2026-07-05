@@ -98,12 +98,29 @@ Other browsers (Firefox, Safari) use different protocols and are not supported.
 - Uses Chromium's own documented DevTools Protocol on `127.0.0.1` only.
 - Logitech G HUB macros are standard userspace automation.
 
+## Logging
+
+GamerScroll writes a rotating log file to:
+
+```
+%APPDATA%\GamerScroll\logs\gamerscroll.log
+```
+
+In dev mode you can also print logs to the console:
+
+```powershell
+.venv\Scripts\python.exe -m gamerscroll --log-level DEBUG --console
+```
+
+Useful log levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`. You can also change the level permanently in **Settings → Logging**.
+
 ## Files
 
 | File / folder | Purpose |
 |---------------|---------|
 | `gamerscroll/` | Main Python package. |
 | `gamerscroll/__main__.py` | Entry point: tray, hotkeys, config, single-instance guard. |
+| `gamerscroll/logger.py` | Loguru setup, rotation, redaction, exception hooks. |
 | `gamerscroll/gui.py` | PyQt6 settings window. |
 | `gamerscroll/tray.py` | Qt system tray icon and menu. |
 | `gamerscroll/browser.py` | Browser detection, profile enumeration, launch/relaunch. |

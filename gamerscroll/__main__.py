@@ -81,7 +81,7 @@ class GamerScrollApp:
         self.tray = TrayManager(
             on_open_settings=self._open_settings,
             on_toggle_pause=self._toggle_pause,
-            on_launch_browser=self._launch_browser,
+            on_launch_browser=lambda: self._launch_browser(confirm=True),
             on_exit=self._exit,
         )
         self.settings_window: Optional[SettingsWindow] = None
@@ -144,7 +144,7 @@ class GamerScrollApp:
             set_level(config.log_level)
         self.tray.set_status("Settings updated")
 
-    def _launch_browser(self) -> None:
+    def _launch_browser(self, confirm: bool = False) -> None:
         exe = Path(self.config.browser_exe)
         if not exe.is_file():
             logger.warning("Browser executable not set or missing: {}", self.config.browser_exe)
@@ -165,6 +165,22 @@ class GamerScrollApp:
                 return
             except Exception as exc:
                 logger.info("CDP not reachable on existing browser ({}); will restart", exc)
+
+            if confirm:
+                reply = QMessageBox.question(
+                    self.settings_window or None,
+                    "Close existing browser?",
+                    f"{self.config.browser_name} is already running without CDP enabled.\n\n"
+                    "Launching it with CDP will close all existing windows and reopen them.\n"
+                    "Unsaved work in the browser may be lost. Continue?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    logger.info("User cancelled browser launch")
+                    self.tray.set_status("Browser launch cancelled")
+                    return
+
             self.tray.set_status("Closing existing browser...")
             terminate_browser(exe_name)
 
@@ -196,7 +212,7 @@ class GamerScrollApp:
             return
         except Exception as exc:
             logger.info("No existing CDP endpoint found ({}); launching browser", exc)
-        self._launch_browser()
+        self._launch_browser(confirm=True)
 
     def _exit(self) -> None:
         logger.info("Shutdown requested")
