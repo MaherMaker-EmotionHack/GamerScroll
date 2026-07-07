@@ -153,11 +153,21 @@ def setup_logging(
 
 
 def set_level(level: str) -> None:
-    """Dynamically change the level of all registered handlers."""
+    """Dynamically change the log level of all registered handlers.
+
+    Loguru does not support updating an existing handler in place, so we
+    remove every handler and re-run :func:`setup_logging` with the new level.
+    This preserves the file/console sink configuration while changing the
+    severity threshold.
+    """
     effective = level.upper()
     if effective not in _LEVELS:
         logger.warning("Ignoring invalid log level: {}", level)
         return
-    for handler_id in list(logger._core.handlers.keys()):  # type: ignore[attr-defined]
-        logger.update(handler_id, level=effective)
+    # Determine whether console output was enabled before reconfiguring.
+    had_console = any(
+        getattr(h, "_sink", None) and hasattr(h._sink, "_stream") and h._sink._stream is sys.stderr  # type: ignore[attr-defined]
+        for h in logger._core.handlers.values()  # type: ignore[attr-defined]
+    )
+    setup_logging(effective, console=had_console if had_console else None)
     logger.info("Log level changed to {}", effective)

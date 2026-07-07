@@ -42,6 +42,7 @@ class MediaStatus:
 
 
 SendActionFn = Callable[[str, int, MediaAction, Optional[str]], None]
+RecoveryFn = Callable[[], bool]
 
 
 class MediaController:
@@ -50,6 +51,11 @@ class MediaController:
     The controller owns the current configuration and status reporting; the
     actual CDP transport is injected via ``send_action`` so tests can substitute
     a fake.
+
+    A ``check_health`` method probes the CDP endpoint and, if unreachable,
+    invokes an optional ``on_recovery`` callback (e.g. relaunch the browser).
+    After a configurable number of consecutive failures the controller
+    degrades gracefully by disabling input until recovery succeeds.
     """
 
     def __init__(
@@ -57,11 +63,17 @@ class MediaController:
         config: Config,
         send_action: Optional[SendActionFn] = None,
         on_status: Optional[Callable[[MediaStatus], None]] = None,
+        on_recovery: Optional[RecoveryFn] = None,
+        max_consecutive_failures: int = 5,
     ):
         self._config = config
         self._on_status = on_status
+        self._on_recovery = on_recovery
+        self._max_consecutive_failures = max_consecutive_failures
         self._lock = threading.Lock()
         self._send_action = send_action or self._default_send_action
+        self._consecutive_failures = 0
+        self._degraded = False
 
     def update_config(self, config: Config) -> None:
         """Replace the active configuration."""
@@ -83,6 +95,10 @@ class MediaController:
                 logger.info("Gesture {} ignored (disabled)", gesture.name)
                 self._emit(False, "Media control is disabled.")
                 return
+            if self._degraded:
+                logger.info("Gesture {} ignored (degraded — CDP unreachable)", gesture.name)
+                self._emit(False, "CDP unreachable — recovering.")
+                return
 
         action = _GESTURE_TO_ACTION.get(gesture)
         if action is None:
@@ -93,10 +109,63 @@ class MediaController:
         try:
             exe_name = Path(cfg.browser_exe).name if cfg.browser_exe else None
             self._send_action(cfg.cdp_host, cfg.cdp_port, action, exe_name)
+            with self._lock:
+                self._consecutive_failures = 0
             self._emit(True, action.name.replace("_", " ").title())
         except Exception as exc:
             logger.error("Media action {} failed: {}", action.name, exc)
+            with self._lock:
+                self._consecutive_failures += 1
+                if self._consecutive_failures >= self._max_consecutive_failures:
+                    self._degraded = True
+                    logger.warning(
+                        "CDP degraded after {} consecutive failures; "
+                        "input disabled until recovery",
+                        self._consecutive_failures,
+                    )
             self._emit(False, str(exc))
+
+    def check_health(self) -> bool:
+        """Probe the CDP endpoint and attempt recovery if unreachable.
+
+        Returns True if CDP is currently reachable.
+        """
+        from gamerscroll.cdp import check_cdp_reachable
+
+        with self._lock:
+            cfg = self._config
+            host = cfg.cdp_host
+            port = cfg.cdp_port
+
+        reachable = check_cdp_reachable(host, port, timeout=2.0)
+        if reachable:
+            with self._lock:
+                if self._degraded:
+                    logger.info("CDP recovered — re-enabling input")
+                self._degraded = False
+                self._consecutive_failures = 0
+            self._emit(True, "CDP reachable")
+            return True
+
+        logger.warning("CDP health check failed on port {}", port)
+        if self._on_recovery:
+            logger.info("Attempting CDP recovery via on_recovery callback")
+            try:
+                recovered = self._on_recovery()
+            except Exception:
+                logger.exception("Recovery callback raised an exception")
+                recovered = False
+            if recovered:
+                with self._lock:
+                    self._degraded = False
+                    self._consecutive_failures = 0
+                self._emit(True, "CDP recovered")
+                return True
+
+        with self._lock:
+            self._degraded = True
+        self._emit(False, "CDP unreachable")
+        return False
 
     def _emit(self, ok: bool, message: str) -> None:
         if self._on_status:

@@ -69,7 +69,11 @@ class GamerScrollApp:
         self.qt_app.setQuitOnLastWindowClosed(False)
 
         logger.info("Creating MediaController")
-        self.controller = MediaController(self.config, on_status=self._on_controller_status)
+        self.controller = MediaController(
+            self.config,
+            on_status=self._on_controller_status,
+            on_recovery=self._recover_cdp,
+        )
         logger.info("Creating GestureDetector")
         self.detector = GestureDetector(
             on_short_press=lambda: self._on_gesture(Gesture.SHORT_PRESS),
@@ -95,6 +99,7 @@ class GamerScrollApp:
         self.tray.set_disabled(self.config.disabled)
         self.detector.set_enabled(not self.config.disabled)
         self.settings_window: Optional[SettingsWindow] = None
+        self._health_timer: Optional[threading.Timer] = None
 
     def _setup_logging(self) -> None:
         effective_level = self._log_level_override or self.config.log_level
@@ -145,23 +150,27 @@ class GamerScrollApp:
 
     def _apply_config(self, config: Config) -> None:
         logger.info("Applying updated config")
-        old_level = self.config.log_level
-        old_key = self.config.media_key
-        self.config = config
-        self.controller.update_config(config)
-        self.detector.hold_threshold_ms = config.hold_threshold_ms
-        self.detector.double_click_window_ms = config.double_click_window_ms
-        self.detector.debounce_ms = config.debounce_ms
-        if config.media_key != old_key:
-            self.hotkeys.restart(config.media_key)
-        if config.auto_start_windows != get_auto_start():
-            logger.info("Auto-start changed to {}", config.auto_start_windows)
-            set_auto_start(config.auto_start_windows)
-        # Update log level at runtime unless overridden by CLI.
-        if self._log_level_override is None and config.log_level != old_level:
-            logger.info("Log level changed via settings to {}", config.log_level)
-            set_level(config.log_level)
-        self.tray.set_status("Settings updated")
+        try:
+            old_level = self.config.log_level
+            old_key = self.config.media_key
+            self.config = config
+            self.controller.update_config(config)
+            self.detector.hold_threshold_ms = config.hold_threshold_ms
+            self.detector.double_click_window_ms = config.double_click_window_ms
+            self.detector.debounce_ms = config.debounce_ms
+            if config.media_key != old_key:
+                self.hotkeys.restart(config.media_key)
+            if config.auto_start_windows != get_auto_start():
+                logger.info("Auto-start changed to {}", config.auto_start_windows)
+                set_auto_start(config.auto_start_windows)
+            # Update log level at runtime unless overridden by CLI.
+            if self._log_level_override is None and config.log_level != old_level:
+                logger.info("Log level changed via settings to {}", config.log_level)
+                set_level(config.log_level)
+            self.tray.set_status("Settings updated")
+        except Exception:
+            logger.exception("Failed to apply config change")
+            self.tray.set_status("Settings update failed")
 
     def _launch_browser(self, confirm: bool = False) -> None:
         exe = Path(self.config.browser_exe)
@@ -250,8 +259,43 @@ class GamerScrollApp:
             play_beep()
             return False
 
+    def _recover_cdp(self) -> bool:
+        """Attempt to relaunch the browser to restore CDP connectivity.
+
+        Called by ``MediaController.check_health`` when the endpoint is
+        unreachable.  Returns True if CDP becomes reachable after the attempt.
+        """
+        logger.info("Attempting CDP recovery via browser relaunch")
+        self.tray.set_status("Reconnecting to browser...")
+        if not self.config.auto_launch_browser:
+            logger.info("Auto-launch disabled; skipping recovery relaunch")
+            return False
+        try:
+            self._launch_browser(confirm=False)
+        except Exception:
+            logger.exception("Recovery relaunch failed")
+            return False
+        from gamerscroll.cdp import check_cdp_reachable
+        return check_cdp_reachable(self.config.cdp_host, self.config.cdp_port, timeout=5.0)
+
+    def _start_health_check_timer(self) -> None:
+        """Start a periodic timer that probes CDP health every 30 seconds."""
+        self._health_timer = threading.Timer(30.0, self._health_check_tick)
+        self._health_timer.daemon = True
+        self._health_timer.start()
+
+    def _health_check_tick(self) -> None:
+        try:
+            self.controller.check_health()
+        except Exception:
+            logger.exception("Health check tick failed")
+        finally:
+            self._start_health_check_timer()
+
     def _exit(self) -> None:
         logger.info("Shutdown requested")
+        if hasattr(self, "_health_timer") and self._health_timer:
+            self._health_timer.cancel()
         self.detector.stop()
         self.hotkeys.stop()
         self.tray.stop()
@@ -275,6 +319,7 @@ class GamerScrollApp:
             self.hotkeys.start()
             self._auto_launch_if_needed()
             self._check_cdp_at_startup()
+            self._start_health_check_timer()
             if not self.config.browser_exe or not Path(self.config.browser_exe).is_file():
                 logger.info("Browser not configured; opening settings window")
                 self._open_settings()

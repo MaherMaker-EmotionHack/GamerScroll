@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from typing import Any, List, Optional
 
 import requests
@@ -169,9 +170,42 @@ def send_key_event_sync(
     port: int,
     key: str,
     browser_exe_name: Optional[str] = None,
+    *,
+    max_retries: int = 3,
+    base_delay: float = 0.5,
 ) -> None:
-    """Synchronous wrapper around :func:`send_key_event`."""
-    asyncio.run(send_key_event(host, port, key, browser_exe_name=browser_exe_name))
+    """Synchronous wrapper around :func:`send_key_event` with retry.
+
+    Retries with exponential backoff on transient connection errors so a
+    brief browser hiccup doesn't immediately fail the gesture.
+    """
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            asyncio.run(send_key_event(host, port, key, browser_exe_name=browser_exe_name))
+            return
+        except CDPError as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                delay = base_delay * (2 ** (attempt - 1))
+                logger.warning(
+                    "CDP key event attempt {}/{} failed ({}); retrying in {:.1f}s",
+                    attempt, max_retries, exc, delay,
+                )
+                time.sleep(delay)
+            else:
+                logger.error("CDP key event failed after {} attempts: {}", max_retries, exc)
+    if last_exc:
+        raise last_exc
+
+
+def check_cdp_reachable(host: str, port: int, timeout: float = 2.0) -> bool:
+    """Return True if the CDP HTTP endpoint is reachable and has at least one page tab."""
+    try:
+        find_active_tab_ws(host, port, timeout=timeout)
+        return True
+    except Exception:
+        return False
 
 
 async def send_scroll(
