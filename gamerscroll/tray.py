@@ -18,27 +18,27 @@ class TrayManager:
     def __init__(
         self,
         on_open_settings: Callable[[], None],
-        on_toggle_pause: Callable[[], None],
+        on_toggle_disabled: Callable[[], None],
         on_launch_browser: Callable[[], None],
         on_exit: Callable[[], None],
         icon: Optional[QIcon] = None,
     ):
         self.on_open_settings = on_open_settings
-        self.on_toggle_pause = on_toggle_pause
+        self.on_toggle_disabled = on_toggle_disabled
         self.on_launch_browser = on_launch_browser
         self.on_exit = on_exit
         self._icon = icon or self._default_icon()
         self._tray: Optional[QSystemTrayIcon] = None
         self._menu: Optional[QMenu] = None
-        self._pause_action: Optional[QAction] = None
-        self._paused = False
+        self._disable_action: Optional[QAction] = None
+        self._disabled = False
         self._status = "GamerScroll — waiting"
 
     def _create_menu(self) -> QMenu:
         menu = QMenu()
-        self._pause_action = QAction("Pause", menu)
-        self._pause_action.triggered.connect(self._on_toggle_pause)
-        menu.addAction(self._pause_action)
+        self._disable_action = QAction("Disable", menu)
+        self._disable_action.triggered.connect(self._on_toggle_disabled)
+        menu.addAction(self._disable_action)
 
         launch_action = QAction("Launch Browser", menu)
         launch_action.triggered.connect(self._on_launch_browser)
@@ -61,11 +61,11 @@ class TrayManager:
         except Exception:
             logger.exception("Tray 'Settings' callback failed")
 
-    def _on_toggle_pause(self) -> None:
+    def _on_toggle_disabled(self) -> None:
         try:
-            self.on_toggle_pause()
+            self.on_toggle_disabled()
         except Exception:
-            logger.exception("Tray 'Pause/Resume' callback failed")
+            logger.exception("Tray 'Disable/Enable' callback failed")
 
     def _on_launch_browser(self) -> None:
         try:
@@ -107,10 +107,10 @@ class TrayManager:
             self._tray = None
         self._menu = None
 
-    def set_paused(self, paused: bool) -> None:
-        self._paused = paused
-        if self._pause_action:
-            self._pause_action.setText("Resume" if paused else "Pause")
+    def set_disabled(self, disabled: bool) -> None:
+        self._disabled = disabled
+        if self._disable_action:
+            self._disable_action.setText("Enable" if disabled else "Disable")
         self._update_tooltip()
 
     def set_status(self, message: str) -> None:
@@ -120,7 +120,7 @@ class TrayManager:
     def _update_tooltip(self) -> None:
         if self._tray is None:
             return
-        state = "paused" if self._paused else "running"
+        state = "disabled" if self._disabled else "enabled"
         self._tray.setToolTip(f"GamerScroll — {state}\n{self._status}")
 
     @staticmethod

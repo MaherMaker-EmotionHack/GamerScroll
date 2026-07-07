@@ -81,3 +81,9 @@ dist/GamerScroll/
 *.exe
 
 .agents/
+
+# Generated diff files
+diff.txt
+diff_utf8.txt
+actual_diff.txt
+actual_diff_utf8.txt

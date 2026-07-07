@@ -8,7 +8,7 @@ from typing import Callable, List, Optional
 
 from loguru import logger
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QKeyEvent
+from PyQt6.QtGui import QKeyEvent, QKeySequence
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -48,16 +48,17 @@ class KeyCaptureDialog(QDialog):
         layout.addWidget(self._label)
         self._captured: Optional[str] = None
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+    def keyPressEvent(self, event: Optional[QKeyEvent]) -> None:  # noqa: N802
+        if event is None:
+            return
         key = event.key()
-        modifiers = event.modifiers()
 
         if key == Qt.Key.Key_Escape:
             self.reject()
             return
 
         # Prefer named keys for function/special keys; otherwise char.
-        key_name = QKeySequence(key | int(modifiers)).toString()
+        key_name = QKeySequence(key).toString()
         if not key_name:
             key_name = event.text().lower()
 
@@ -84,8 +85,9 @@ class SettingsWindow(QWidget):
 
     config_changed = pyqtSignal(Config)
     launch_browser_requested = pyqtSignal()
-    test_scroll_down_requested = pyqtSignal()
-    test_scroll_up_requested = pyqtSignal()
+    test_pause_play_requested = pyqtSignal()
+    test_next_requested = pyqtSignal()
+    test_prev_requested = pyqtSignal()
 
     def __init__(self, config: Config, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -149,60 +151,59 @@ class SettingsWindow(QWidget):
 
         layout.addWidget(browser_group)
 
-        # Hotkeys group
-        hotkey_group = QGroupBox("Hotkeys")
-        hotkey_layout = QFormLayout(hotkey_group)
+        # Media key group
+        media_key_group = QGroupBox("Media Key")
+        media_key_layout = QFormLayout(media_key_group)
 
-        self._down_key_edit = QLineEdit()
-        self._down_key_edit.setReadOnly(True)
-        down_capture = QPushButton("Capture")
-        down_capture.clicked.connect(lambda: self._capture_key("scroll down", self._down_key_edit))
-        down_row = QHBoxLayout()
-        down_row.addWidget(self._down_key_edit)
-        down_row.addWidget(down_capture)
-        hotkey_layout.addRow("Scroll down:", down_row)
+        self._media_key_edit = QLineEdit()
+        self._media_key_edit.setReadOnly(True)
+        media_key_capture = QPushButton("Capture")
+        media_key_capture.clicked.connect(lambda: self._capture_key("media key", self._media_key_edit))
+        media_key_row = QHBoxLayout()
+        media_key_row.addWidget(self._media_key_edit)
+        media_key_row.addWidget(media_key_capture)
+        media_key_layout.addRow("Media key:", media_key_row)
 
-        self._up_key_edit = QLineEdit()
-        self._up_key_edit.setReadOnly(True)
-        up_capture = QPushButton("Capture")
-        up_capture.clicked.connect(lambda: self._capture_key("scroll up", self._up_key_edit))
-        up_row = QHBoxLayout()
-        up_row.addWidget(self._up_key_edit)
-        up_row.addWidget(up_capture)
-        hotkey_layout.addRow("Scroll up:", up_row)
+        layout.addWidget(media_key_group)
 
-        layout.addWidget(hotkey_group)
+        # Gesture timing group
+        timing_group = QGroupBox("Gesture Timing")
+        timing_layout = QFormLayout(timing_group)
 
-        # Scroll settings group
-        scroll_group = QGroupBox("Scroll Settings")
-        scroll_layout = QFormLayout(scroll_group)
+        self._hold_threshold_spin = QSpinBox()
+        self._hold_threshold_spin.setRange(50, 5000)
+        self._hold_threshold_spin.setSingleStep(50)
+        self._hold_threshold_spin.setValue(500)
+        self._hold_threshold_spin.setSuffix(" ms")
+        timing_layout.addRow("Hold threshold:", self._hold_threshold_spin)
 
-        self._amount_spin = QSpinBox()
-        self._amount_spin.setRange(1, 10000)
-        self._amount_spin.setValue(400)
-        self._amount_spin.setSuffix(" px")
-        scroll_layout.addRow("Scroll amount:", self._amount_spin)
+        self._double_click_window_spin = QSpinBox()
+        self._double_click_window_spin.setRange(50, 2000)
+        self._double_click_window_spin.setSingleStep(50)
+        self._double_click_window_spin.setValue(300)
+        self._double_click_window_spin.setSuffix(" ms")
+        timing_layout.addRow("Double-click window:", self._double_click_window_spin)
 
-        self._x_spin = QSpinBox()
-        self._x_spin.setRange(0, 99999)
-        self._x_spin.setValue(640)
-        scroll_layout.addRow("Wheel X coordinate:", self._x_spin)
-
-        self._y_spin = QSpinBox()
-        self._y_spin.setRange(0, 99999)
-        self._y_spin.setValue(360)
-        scroll_layout.addRow("Wheel Y coordinate:", self._y_spin)
+        self._debounce_spin = QSpinBox()
+        self._debounce_spin.setRange(0, 1000)
+        self._debounce_spin.setSingleStep(10)
+        self._debounce_spin.setValue(150)
+        self._debounce_spin.setSuffix(" ms")
+        timing_layout.addRow("Debounce:", self._debounce_spin)
 
         test_layout = QHBoxLayout()
-        test_down_btn = QPushButton("Test Scroll Down")
-        test_down_btn.clicked.connect(self.test_scroll_down_requested.emit)
-        test_up_btn = QPushButton("Test Scroll Up")
-        test_up_btn.clicked.connect(self.test_scroll_up_requested.emit)
-        test_layout.addWidget(test_down_btn)
-        test_layout.addWidget(test_up_btn)
-        scroll_layout.addRow("", test_layout)
+        test_pause_btn = QPushButton("Test Pause/Play")
+        test_pause_btn.clicked.connect(self.test_pause_play_requested.emit)
+        test_next_btn = QPushButton("Test Next")
+        test_next_btn.clicked.connect(self.test_next_requested.emit)
+        test_prev_btn = QPushButton("Test Prev")
+        test_prev_btn.clicked.connect(self.test_prev_requested.emit)
+        test_layout.addWidget(test_pause_btn)
+        test_layout.addWidget(test_next_btn)
+        test_layout.addWidget(test_prev_btn)
+        timing_layout.addRow("", test_layout)
 
-        layout.addWidget(scroll_group)
+        layout.addWidget(timing_group)
 
         # Logging group
         logging_group = QGroupBox("Logging")
@@ -308,11 +309,10 @@ class SettingsWindow(QWidget):
     def _load_config_into_ui(self) -> None:
         self._exe_edit.setText(self._config.browser_exe)
         self._port_spin.setValue(self._config.cdp_port)
-        self._down_key_edit.setText(self._config.scroll_down_key)
-        self._up_key_edit.setText(self._config.scroll_up_key)
-        self._amount_spin.setValue(self._config.scroll_amount)
-        self._x_spin.setValue(self._config.scroll_x)
-        self._y_spin.setValue(self._config.scroll_y)
+        self._media_key_edit.setText(self._config.media_key)
+        self._hold_threshold_spin.setValue(self._config.hold_threshold_ms)
+        self._double_click_window_spin.setValue(self._config.double_click_window_ms)
+        self._debounce_spin.setValue(self._config.debounce_ms)
         self._auto_launch_check.setChecked(self._config.auto_launch_browser)
         self._auto_start_check.setChecked(self._config.auto_start_windows)
         self._log_level_combo.setCurrentText(self._config.log_level.upper())
@@ -341,14 +341,13 @@ class SettingsWindow(QWidget):
             profile=self._profile_combo.currentText(),
             cdp_port=self._port_spin.value(),
             cdp_host=self._config.cdp_host,
-            scroll_down_key=self._down_key_edit.text().lower(),
-            scroll_up_key=self._up_key_edit.text().lower(),
-            scroll_amount=self._amount_spin.value(),
-            scroll_x=self._x_spin.value(),
-            scroll_y=self._y_spin.value(),
+            media_key=self._media_key_edit.text().lower(),
+            hold_threshold_ms=self._hold_threshold_spin.value(),
+            double_click_window_ms=self._double_click_window_spin.value(),
+            debounce_ms=self._debounce_spin.value(),
             auto_launch_browser=self._auto_launch_check.isChecked(),
             auto_start_windows=self._auto_start_check.isChecked(),
-            paused=self._config.paused,
+            disabled=self._config.disabled,
             log_level=self._log_level_combo.currentText(),
         )
         errors = new_config.validate()

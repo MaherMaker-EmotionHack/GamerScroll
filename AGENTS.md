@@ -12,18 +12,20 @@ GamerScroll is a **Windows-only Python/PyQt6 system-tray application** that scro
 ## Architecture
 
 ```text
-[Mouse button via Logitech G HUB] → [F13/F14]
+[Mouse button via Logitech G HUB] → [F13]
         ↓
-[pynput global hotkey listener in gamerscroll/hotkeys.py]
+[pynput global media-key listener in gamerscroll/hotkeys.py]
         ↓
-[ gamerscroll/scroller.py ] → [ gamerscroll/cdp.py ]
+[gamerscroll/gestures.py GestureDetector]
+        ↓
+[gamerscroll/controller.py MediaController] → [gamerscroll/cdp.py]
         ↓
 [ HTTP GET localhost:9222/json  →  WebSocket CDP ]
         ↓
-[ Chromium renderer: wheel scroll + arrow keys ]
+[ Chromium renderer: Space / ArrowDown / ArrowUp key events ]
 ```
 
-- `gamerscroll/__main__.py` is the composition root: creates `Config`, `Scroller`, `HotkeyListener`, `TrayManager`, wires Qt signals, and starts the event loop.
+- `gamerscroll/__main__.py` is the composition root: creates `Config`, `GestureDetector`, `MediaController`, `HotkeyListener`, `TrayManager`, wires Qt signals, and starts the event loop.
 - `gamerscroll/cdp.py` is the only module that talks to the browser.
 - `gamerscroll/browser.py` is the only module that launches/terminates browser processes.
 - `gamerscroll/config.py` is the only module that owns the JSON config schema and `%APPDATA%\GamerScroll\config.json` persistence.
@@ -70,10 +72,10 @@ Regenerate the icon:
 ## Common pitfalls
 
 - **Browser must run with `--remote-debugging-port=<port>`**. Auto-launch in `browser.py` closes existing browser windows first; warn users about losing unsaved work.
-- **CDP scroll targets the active/focused tab**. If the user switches tabs, they must click the desired tab first.
-- **YouTube Shorts uses arrow-key navigation**, so `cdp.py` sends both wheel and arrow-key events per scroll.
-- **Hotkey listener has a hard-coded 200 ms cooldown** in `hotkey.py`. Rapid repeated presses can be dropped.
-- **`gamerscroll/scroller.py` uses `Path(cfg.browser_exe).name` but does not import `Path`** — a latent bug; always add `from pathlib import Path` when touching that module.
+- **CDP media commands target the active/focused tab**. If the user switches tabs, they must click the desired tab first.
+- **YouTube Shorts uses `Space` for pause/play and arrow keys for navigation**, so `cdp.py` sends `Input.dispatchKeyEvent` pairs for those keys.
+- **Gesture timing is configurable** via `hold_threshold_ms`, `double_click_window_ms`, and `debounce_ms` in `Config`.
+- **Long hold fires at the threshold mark**, not on release; keep the timer logic in `gestures.py` consistent with that contract.
 - **Single-instance mutex** (`Global\GamerScrollSingleInstanceMutex`) prevents two copies from running.
 - **pynput key names are lowercase**; the GUI normalizes captured keys to lowercase (`keyboard.Key[key_name]`).
 - **Logs redact the Windows user profile path** and are written to `%APPDATA%\GamerScroll\logs\gamerscroll.log`.

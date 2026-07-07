@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gamerscroll"
+version = "0.2.0"
+description = "Media control for gamers via Chrome DevTools Protocol"
+requires-python = ">=3.10"
+dependencies = [
+    "pynput>=1.7.6",
+    "pywin32>=306",
+    "requests>=2.31.0",
+    "websockets>=12.0",
+    "PyQt6>=6.6.0",
+    "loguru>=0.7.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "mypy>=1.8.0",
+    "types-requests>=2.31.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["."]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+exclude = [
+    "^build/",
+    "^dist/",
+    "^\\.venv/",
+]
+
+[[tool.mypy.overrides]]
+module = "PyQt6.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "pynput.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "win32gui.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "win32process.*"
+ignore_missing_imports = true

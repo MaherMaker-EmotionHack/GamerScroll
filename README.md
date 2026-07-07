@@ -1,6 +1,6 @@
 # GamerScroll
 
-Control browser scrolling with a Logitech mouse button while playing Valorant (or any fullscreen game) without alt-tabbing.
+Media control for gamers. Pause/play, skip, and go back in YouTube Shorts (or any browser tab) with a single Logitech mouse button while a fullscreen game has focus — no alt-tabbing required.
 
 ## Quick start
 
@@ -29,16 +29,20 @@ Control browser scrolling with a Logitech mouse button while playing Valorant (o
    - In settings, click **Launch Browser Now**.
    - This closes any existing browser windows and restarts it with `--remote-debugging-port=<port>`.
 
-5. **Configure hotkeys**
+5. **Configure your media key and gestures**
 
-   - Default: `F13` scrolls down, `F14` scrolls up.
-   - Click **Capture** next to each field to rebind them.
+   - Default media key: `F13`.
+   - Default gestures:
+     - **Short press** → Pause/Play
+     - **Double press** → Next
+     - **Long hold** → Prev
+   - Adjust **Hold threshold**, **Double-click window**, and **Debounce** to tune the feel.
 
 6. **Use it**
 
-   - Open YouTube Shorts or any scrollable page.
-   - Focus Valorant (or another fullscreen game).
-   - Press your bound mouse button — the browser scrolls/advances in the background.
+   - Open YouTube Shorts.
+   - Focus your fullscreen game.
+   - Press your bound mouse button with the right gesture — the browser responds in the background.
 
 ## Build a single `.exe`
 
@@ -63,22 +67,34 @@ Configuration is stored at:
 ```
 [Logitech mouse button]
         ↓
-[Logitech G HUB macro → F13/F14]
+[Logitech G HUB macro → F13]
         ↓
-[GamerScroll tray app (global hotkey listener)]
+[GamerScroll tray app (global media-key listener)]
+        ↓
+[GestureDetector: short press / double press / long hold]
+        ↓
+[MediaController maps gesture → media action]
         ↓
 [HTTP GET localhost:9222/json → find active tab WebSocket]
         ↓
-[WebSocket CDP commands]
+[WebSocket CDP key events]
         ↓
 [Chromium/Comet renderer]
         ↓
-window.scrollBy()  OR  ArrowDown/ArrowUp key event
+Space / ArrowDown / ArrowUp key event
 ```
 
 ## How it works
 
-The app uses the **Chrome DevTools Protocol (CDP)**. It sends real `Input.dispatchMouseEvent` (mouse wheel) and `Input.dispatchKeyEvent` (arrow keys) to the active browser tab. Because these events are injected into Chromium's own input pipeline, the browser does **not** need to be focused.
+The app uses the **Chrome DevTools Protocol (CDP)**. It sends real `Input.dispatchKeyEvent` (`Space`, `ArrowDown`, `ArrowUp`) to the active browser tab. Because these events are injected into Chromium's own input pipeline, the browser does **not** need to be focused.
+
+A single phantom key (default `F13`) is interpreted by a gesture detector:
+
+| Gesture | Action | CDP key |
+|---------|--------|---------|
+| Short press | Pause/Play | `Space` |
+| Double press | Next | `ArrowDown` |
+| Long hold | Prev | `ArrowUp` |
 
 ## Browser support
 
@@ -119,14 +135,15 @@ Useful log levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`. You can also change the 
 | File / folder | Purpose |
 |---------------|---------|
 | `gamerscroll/` | Main Python package. |
-| `gamerscroll/__main__.py` | Entry point: tray, hotkeys, config, single-instance guard. |
+| `gamerscroll/__main__.py` | Entry point: tray, gesture detector, media controller, single-instance guard. |
 | `gamerscroll/logger.py` | Loguru setup, rotation, redaction, exception hooks. |
 | `gamerscroll/gui.py` | PyQt6 settings window. |
 | `gamerscroll/tray.py` | Qt system tray icon and menu. |
 | `gamerscroll/browser.py` | Browser detection, profile enumeration, launch/relaunch. |
-| `gamerscroll/cdp.py` | CDP connection and scroll commands. |
-| `gamerscroll/hotkeys.py` | Global `pynput` hotkey listener. |
-| `gamerscroll/scroller.py` | Orchestrates hotkey events → CDP scroll. |
+| `gamerscroll/cdp.py` | CDP connection and key-event commands. |
+| `gamerscroll/gestures.py` | Single-key gesture detector state machine. |
+| `gamerscroll/controller.py` | Maps gestures to CDP media actions. |
+| `gamerscroll/hotkeys.py` | Global `pynput` media-key listener. |
 | `gamerscroll/config.py` | Load/save `%APPDATA%\GamerScroll\config.json`. |
 | `gamerscroll/startup.py` | Single-instance mutex + Windows Run registry. |
 | `assets/icon.ico` | App icon (also used by PyInstaller). |
@@ -148,5 +165,5 @@ See `FUTURE.md` for planned or shelved ideas, including the browser-extension re
 ## Known limitations
 
 - The browser must be launched with `--remote-debugging-port=<port>`. The app can do this automatically, but it will close existing browser windows first.
-- Scrolls the active/focused browser tab. If you switch tabs, you may need to click the desired tab first.
-- YouTube Shorts uses arrow-key navigation; normal pages use wheel scroll.
+- Media commands target the active/focused browser tab. If you switch tabs, you may need to click the desired tab first.
+- Optimized for YouTube Shorts. Other reel sites (Instagram, Facebook) may not respond to the same keys.

@@ -75,3 +75,12 @@ def get_auto_start() -> bool:
             return True
     except FileNotFoundError:
         return False
+
+
+def play_beep() -> None:
+    """Play the Windows default beep sound for failure feedback."""
+    try:
+        import winsound
+        winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+    except Exception as exc:
+        logger.debug("Could not play beep: {}", exc)

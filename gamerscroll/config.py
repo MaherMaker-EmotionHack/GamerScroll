@@ -18,14 +18,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "profile": "Default",
     "cdp_port": 9222,
     "cdp_host": "127.0.0.1",
-    "scroll_down_key": "f13",
-    "scroll_up_key": "f14",
-    "scroll_amount": 400,
-    "scroll_x": 640,
-    "scroll_y": 360,
+    "media_key": "f13",
+    "hold_threshold_ms": 500,
+    "double_click_window_ms": 300,
+    "debounce_ms": 150,
     "auto_launch_browser": True,
     "auto_start_windows": False,
-    "paused": False,
+    "disabled": False,
     "log_level": "INFO",
 }
 
@@ -38,14 +37,13 @@ class Config:
     profile: str = "Default"
     cdp_port: int = 9222
     cdp_host: str = "127.0.0.1"
-    scroll_down_key: str = "f13"
-    scroll_up_key: str = "f14"
-    scroll_amount: int = 400
-    scroll_x: int = 640
-    scroll_y: int = 360
+    media_key: str = "f13"
+    hold_threshold_ms: int = 500
+    double_click_window_ms: int = 300
+    debounce_ms: int = 150
     auto_launch_browser: bool = True
     auto_start_windows: bool = False
-    paused: bool = False
+    disabled: bool = False
     log_level: str = "INFO"
 
     @classmethod
@@ -65,11 +63,43 @@ class Config:
             logger.warning("Cannot read config file at {}: {}", path, exc)
             return cls()
         merged = {**DEFAULT_CONFIG, **data}
-        cfg = cls(**{k: merged[k] for k in DEFAULT_CONFIG if k in merged})
+        # Migrate legacy `paused` field to `disabled`.
+        if "paused" in data and "disabled" not in data:
+            merged["disabled"] = bool(data["paused"])
+
+        fields = {k: merged[k] for k in DEFAULT_CONFIG if k in merged}
+        # Drop legacy scroll fields so they don't break dataclass construction.
+        fields = {k: v for k, v in fields.items() if k in cls.__dataclass_fields__}
+        cfg = cls(**fields)
+        cfg._sanitize_to_defaults()
         logger.info("Loaded config from {}", path)
-        logger.debug("Effective config: browser_name={}, cdp_port={}, profile={}, log_level={}",
-                     cfg.browser_name, cfg.cdp_port, cfg.profile, cfg.log_level)
+        logger.debug(
+            "Effective config: browser_name={}, cdp_port={}, profile={}, log_level={}",
+            cfg.browser_name, cfg.cdp_port, cfg.profile, cfg.log_level,
+        )
         return cfg
+
+    def _sanitize_to_defaults(self) -> None:
+        """Reset invalid numeric/boolean fields to their defaults on load."""
+        if not isinstance(self.cdp_port, int) or not (1024 <= self.cdp_port <= 65535):
+            self.cdp_port = DEFAULT_CONFIG["cdp_port"]
+        if not isinstance(self.hold_threshold_ms, int) or self.hold_threshold_ms <= 0:
+            self.hold_threshold_ms = DEFAULT_CONFIG["hold_threshold_ms"]
+        if (
+            not isinstance(self.double_click_window_ms, int)
+            or self.double_click_window_ms <= 0
+        ):
+            self.double_click_window_ms = DEFAULT_CONFIG["double_click_window_ms"]
+        if not isinstance(self.debounce_ms, int) or self.debounce_ms < 0:
+            self.debounce_ms = DEFAULT_CONFIG["debounce_ms"]
+        if not isinstance(self.log_level, str) or self.log_level not in {
+            "DEBUG", "INFO", "WARNING", "ERROR"
+        }:
+            self.log_level = DEFAULT_CONFIG["log_level"]
+        for field_name in ("auto_launch_browser", "auto_start_windows", "disabled"):
+            current = getattr(self, field_name)
+            if not isinstance(current, bool):
+                setattr(self, field_name, bool(current))
 
     def save(self, path: Path | None = None) -> None:
         if path is None:
@@ -99,12 +129,16 @@ class Config:
             errors.append(f"User data directory not found: {self.user_data_dir or '(none)'}")
         if not (1024 <= self.cdp_port <= 65535):
             errors.append(f"CDP port must be between 1024 and 65535, got {self.cdp_port}")
-        if not self.scroll_down_key:
-            errors.append("Scroll-down key is not set.")
-        if not self.scroll_up_key:
-            errors.append("Scroll-up key is not set.")
-        if self.scroll_amount <= 0:
-            errors.append(f"Scroll amount must be positive, got {self.scroll_amount}")
+        if not self.media_key:
+            errors.append("Media key is not set.")
+        if self.hold_threshold_ms <= 0:
+            errors.append(f"Hold threshold must be positive, got {self.hold_threshold_ms}")
+        if self.double_click_window_ms <= 0:
+            errors.append(
+                f"Double-click window must be positive, got {self.double_click_window_ms}"
+            )
+        if self.debounce_ms < 0:
+            errors.append(f"Debounce must be non-negative, got {self.debounce_ms}")
         if self.log_level not in {"DEBUG", "INFO", "WARNING", "ERROR"}:
             errors.append(f"Invalid log level: {self.log_level}")
         return errors

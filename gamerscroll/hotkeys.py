@@ -1,38 +1,37 @@
-"""Global hotkey listener using pynput."""
+"""Global media-key listener using pynput."""
 
 from __future__ import annotations
 
 import threading
-import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from loguru import logger
 from pynput import keyboard
 
 
 KeyName = str
-ActionCallback = Callable[[], None]
+PressCallback = Callable[[], None]
+ReleaseCallback = Callable[[], None]
 
 
 class HotkeyListener:
-    """Listen for global key presses and dispatch to scroll callbacks."""
+    """Listen for a single global media key and dispatch press/release events.
+
+    The listener is deliberately thin: timing interpretation (short press,
+    double press, long hold) lives in :class:`gamerscroll.gestures.GestureDetector`.
+    """
 
     def __init__(
         self,
-        down_key: KeyName,
-        up_key: KeyName,
-        on_scroll_down: ActionCallback,
-        on_scroll_up: ActionCallback,
-        cooldown_ms: float = 200.0,
+        media_key: KeyName,
+        on_press: PressCallback,
+        on_release: ReleaseCallback,
     ):
-        self.down_key = down_key
-        self.up_key = up_key
-        self.on_scroll_down = on_scroll_down
-        self.on_scroll_up = on_scroll_up
-        self._cooldown_s = max(0.0, cooldown_ms / 1000.0)
+        self.media_key = media_key
+        self.on_press = on_press
+        self.on_release = on_release
         self._listener: Optional[keyboard.Listener] = None
         self._thread: Optional[threading.Thread] = None
-        self._last_trigger = 0.0
 
     @staticmethod
     def _parse(key_name: str) -> keyboard.Key:
@@ -43,46 +42,41 @@ class HotkeyListener:
             # Single character key, e.g. 'a', '1'.
             return keyboard.KeyCode.from_char(key_name)
 
-    def _maybe_trigger(self, callback: ActionCallback) -> None:
-        now = time.monotonic()
-        if now - self._last_trigger < self._cooldown_s:
-            logger.debug("Hotkey trigger ignored due to cooldown")
-            return
-        self._last_trigger = now
-        callback()
-
     def start(self) -> None:
         if self._listener is not None:
             logger.debug("Hotkey listener already running")
             return
 
-        logger.info("Starting hotkey listener (down='{}', up='{}')", self.down_key, self.up_key)
+        logger.info("Starting hotkey listener (media_key='{}')", self.media_key)
         try:
-            down_key = self._parse(self.down_key)
-            up_key = self._parse(self.up_key)
+            media_key = self._parse(self.media_key)
         except ValueError as exc:
-            logger.error("Failed to parse hotkey: {}", exc)
+            logger.error("Failed to parse media key: {}", exc)
             raise
 
-        pressed: set[keyboard.Key] = set()
+        pressed: set[Any] = set()
 
-        def on_press(key):
-            if key in pressed:
-                return None
+        def on_press(key: Any) -> None:
+            if key is None or key in pressed:
+                return
             pressed.add(key)
-            if key == down_key:
-                logger.debug("Scroll-down key pressed")
-                self._maybe_trigger(self.on_scroll_down)
-                return None
-            if key == up_key:
-                logger.debug("Scroll-up key pressed")
-                self._maybe_trigger(self.on_scroll_up)
-                return None
-            return None
+            if key == media_key:
+                logger.debug("Media key pressed")
+                try:
+                    self.on_press()
+                except Exception:
+                    logger.exception("Media key press callback failed")
 
-        def on_release(key):
+        def on_release(key: Any) -> None:
+            if key is None or key not in pressed:
+                return
             pressed.discard(key)
-            return None
+            if key == media_key:
+                logger.debug("Media key released")
+                try:
+                    self.on_release()
+                except Exception:
+                    logger.exception("Media key release callback failed")
 
         self._listener = keyboard.Listener(on_press=on_press, on_release=on_release)
         self._thread = threading.Thread(target=self._listener.run, daemon=True)
@@ -95,9 +89,8 @@ class HotkeyListener:
             self._listener.stop()
             self._listener = None
 
-    def restart(self, down_key: KeyName, up_key: KeyName) -> None:
-        logger.info("Restarting hotkey listener with new keys (down='{}', up='{}')", down_key, up_key)
+    def restart(self, media_key: KeyName) -> None:
+        logger.info("Restarting hotkey listener with media_key='{}'", media_key)
         self.stop()
-        self.down_key = down_key
-        self.up_key = up_key
+        self.media_key = media_key
         self.start()

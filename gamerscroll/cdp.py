@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import requests
 import websockets
@@ -106,6 +106,72 @@ def find_active_tab_ws(
     title = tabs[0].get("title", "")
     logger.info("No active tab found; falling back to first tab: {} ({})", title, ws_url)
     return ws_url
+
+
+_KEY_CODES: dict[str, int] = {
+    "Space": 32,
+    "ArrowDown": 40,
+    "ArrowUp": 38,
+}
+
+
+async def send_key_event(
+    host: str,
+    port: int,
+    key: str,
+    browser_exe_name: Optional[str] = None,
+) -> None:
+    """Send a keyDown/keyUp pair for a single key via CDP.
+
+    Args:
+        key: The CDP key name, e.g. ``"Space"``, ``"ArrowDown"``, ``"ArrowUp"``.
+        browser_exe_name: Optional executable name used to resolve the active tab.
+    """
+    ws_url = find_active_tab_ws(host, port, browser_exe_name=browser_exe_name)
+    if not ws_url:
+        raise CDPError("No target tab available.")
+
+    vk_code = _KEY_CODES.get(key)
+    if vk_code is None:
+        raise CDPError(f"Unsupported CDP key: {key}")
+
+    # Include `text` for Space so Chromium generates a keypress/input event.
+    text = " " if key == "Space" else None
+
+    logger.debug("Sending CDP key event: {}", key)
+    try:
+        async with websockets.connect(ws_url) as ws:
+            for idx, event_type in enumerate(("keyDown", "keyUp"), start=1):
+                params: dict[str, Any] = {
+                    "type": event_type,
+                    "key": key,
+                    "code": key,
+                    "windowsVirtualKeyCode": vk_code,
+                    "nativeVirtualKeyCode": vk_code,
+                }
+                if text is not None:
+                    params["text"] = text
+                await ws.send(json.dumps({
+                    "id": idx,
+                    "method": "Input.dispatchKeyEvent",
+                    "params": params,
+                }))
+                await ws.recv()
+            logger.debug("CDP key event completed successfully")
+    except websockets.WebSocketException as exc:
+        raise CDPError(f"WebSocket error: {exc}") from exc
+    except OSError as exc:
+        raise CDPError(f"Connection error: {exc}") from exc
+
+
+def send_key_event_sync(
+    host: str,
+    port: int,
+    key: str,
+    browser_exe_name: Optional[str] = None,
+) -> None:
+    """Synchronous wrapper around :func:`send_key_event`."""
+    asyncio.run(send_key_event(host, port, key, browser_exe_name=browser_exe_name))
 
 
 async def send_scroll(

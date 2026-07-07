@@ -23,11 +23,12 @@ from gamerscroll.browser import (
     wait_for_cdp,
 )
 from gamerscroll.config import Config
+from gamerscroll.controller import MediaController, MediaStatus
 from gamerscroll.gui import SettingsWindow
+from gamerscroll.gestures import Gesture, GestureDetector
 from gamerscroll.hotkeys import HotkeyListener
 from gamerscroll.logger import set_level, setup_logging
-from gamerscroll.scroller import Scroller, ScrollerStatus
-from gamerscroll.startup import SingleInstanceGuard, get_auto_start, set_auto_start
+from gamerscroll.startup import SingleInstanceGuard, get_auto_start, play_beep, set_auto_start
 from gamerscroll.tray import TrayManager
 
 
@@ -67,23 +68,32 @@ class GamerScrollApp:
         self.qt_app = QApplication(sys.argv)
         self.qt_app.setQuitOnLastWindowClosed(False)
 
-        logger.info("Creating Scroller")
-        self.scroller = Scroller(self.config, on_status=self._on_scroller_status)
-        logger.info("Creating HotkeyListener (down={}, up={})",
-                    self.config.scroll_down_key, self.config.scroll_up_key)
+        logger.info("Creating MediaController")
+        self.controller = MediaController(self.config, on_status=self._on_controller_status)
+        logger.info("Creating GestureDetector")
+        self.detector = GestureDetector(
+            on_short_press=lambda: self._on_gesture(Gesture.SHORT_PRESS),
+            on_double_press=lambda: self._on_gesture(Gesture.DOUBLE_PRESS),
+            on_long_hold=lambda: self._on_gesture(Gesture.LONG_HOLD),
+            hold_threshold_ms=self.config.hold_threshold_ms,
+            double_click_window_ms=self.config.double_click_window_ms,
+            debounce_ms=self.config.debounce_ms,
+        )
+        logger.info("Creating HotkeyListener (media_key={})", self.config.media_key)
         self.hotkeys = HotkeyListener(
-            self.config.scroll_down_key,
-            self.config.scroll_up_key,
-            on_scroll_down=self._on_scroll_down,
-            on_scroll_up=self._on_scroll_up,
+            self.config.media_key,
+            on_press=self.detector.press,
+            on_release=self.detector.release,
         )
         logger.info("Creating TrayManager")
         self.tray = TrayManager(
             on_open_settings=self._open_settings,
-            on_toggle_pause=self._toggle_pause,
+            on_toggle_disabled=self._toggle_disabled,
             on_launch_browser=lambda: self._launch_browser(confirm=True),
             on_exit=self._exit,
         )
+        self.tray.set_disabled(self.config.disabled)
+        self.detector.set_enabled(not self.config.disabled)
         self.settings_window: Optional[SettingsWindow] = None
 
     def _setup_logging(self) -> None:
@@ -94,20 +104,16 @@ class GamerScrollApp:
         logger.info("Config path: {}", Config.default_path())
         logger.info("Log file: {}", log_path)
 
-    def _on_scroll_down(self) -> None:
-        logger.debug("Scroll-down hotkey dispatched")
-        threading.Thread(target=self.scroller.scroll_down, daemon=True).start()
+    def _on_gesture(self, gesture: Gesture) -> None:
+        logger.debug("Gesture dispatched: {}", gesture.name)
+        threading.Thread(target=self.controller.handle_gesture, args=(gesture,), daemon=True).start()
 
-    def _on_scroll_up(self) -> None:
-        logger.debug("Scroll-up hotkey dispatched")
-        threading.Thread(target=self.scroller.scroll_up, daemon=True).start()
-
-    def _on_scroller_status(self, status: ScrollerStatus) -> None:
+    def _on_controller_status(self, status: MediaStatus) -> None:
         self.tray.set_status(status.message)
         if status.ok:
-            logger.info("Scroller status: {}", status.message)
+            logger.info("Media controller status: {}", status.message)
         else:
-            logger.warning("Scroller status: {}", status.message)
+            logger.warning("Media controller status: {}", status.message)
 
     def _open_settings(self) -> None:
         logger.info("Opening settings window")
@@ -115,26 +121,39 @@ class GamerScrollApp:
             self.settings_window = SettingsWindow(self.config)
             self.settings_window.config_changed.connect(self._apply_config)
             self.settings_window.launch_browser_requested.connect(self._launch_browser)
-            self.settings_window.test_scroll_down_requested.connect(self.scroller.scroll_down)
-            self.settings_window.test_scroll_up_requested.connect(self.scroller.scroll_up)
+            self.settings_window.test_pause_play_requested.connect(
+                lambda: self.controller.handle_gesture(Gesture.SHORT_PRESS)
+            )
+            self.settings_window.test_next_requested.connect(
+                lambda: self.controller.handle_gesture(Gesture.DOUBLE_PRESS)
+            )
+            self.settings_window.test_prev_requested.connect(
+                lambda: self.controller.handle_gesture(Gesture.LONG_HOLD)
+            )
             self.settings_window.destroyed.connect(lambda: setattr(self, "settings_window", None))
         self.settings_window.show()
         self.settings_window.raise_()
         self.settings_window.activateWindow()
 
-    def _toggle_pause(self) -> None:
-        self.config.paused = not self.config.paused
-        logger.info("Pause toggled: {}", self.config.paused)
+    def _toggle_disabled(self) -> None:
+        self.config.disabled = not self.config.disabled
+        logger.info("Disabled toggled: {}", self.config.disabled)
         self.config.save()
-        self.scroller.update_config(self.config)
-        self.tray.set_paused(self.config.paused)
+        self.controller.update_config(self.config)
+        self.detector.set_enabled(not self.config.disabled)
+        self.tray.set_disabled(self.config.disabled)
 
     def _apply_config(self, config: Config) -> None:
         logger.info("Applying updated config")
         old_level = self.config.log_level
+        old_key = self.config.media_key
         self.config = config
-        self.scroller.update_config(config)
-        self.hotkeys.restart(config.scroll_down_key, config.scroll_up_key)
+        self.controller.update_config(config)
+        self.detector.hold_threshold_ms = config.hold_threshold_ms
+        self.detector.double_click_window_ms = config.double_click_window_ms
+        self.detector.debounce_ms = config.debounce_ms
+        if config.media_key != old_key:
+            self.hotkeys.restart(config.media_key)
         if config.auto_start_windows != get_auto_start():
             logger.info("Auto-start changed to {}", config.auto_start_windows)
             set_auto_start(config.auto_start_windows)
@@ -214,8 +233,26 @@ class GamerScrollApp:
             logger.info("No existing CDP endpoint found ({}); launching browser", exc)
         self._launch_browser(confirm=True)
 
+    def _check_cdp_at_startup(self) -> bool:
+        """Return True if CDP is reachable, otherwise log and beep."""
+        if not self.config.browser_exe or not Path(self.config.browser_exe).is_file():
+            logger.info("Startup CDP check skipped: browser not configured")
+            self.tray.set_status("Browser not configured")
+            return False
+        try:
+            from gamerscroll.cdp import find_active_tab_ws
+            find_active_tab_ws(self.config.cdp_host, self.config.cdp_port, timeout=2.0)
+            logger.info("Startup CDP check passed")
+            return True
+        except Exception as exc:
+            logger.warning("Startup CDP check failed: {}", exc)
+            self.tray.set_status("CDP not reachable")
+            play_beep()
+            return False
+
     def _exit(self) -> None:
         logger.info("Shutdown requested")
+        self.detector.stop()
         self.hotkeys.stop()
         self.tray.stop()
         self.qt_app.quit()
@@ -237,6 +274,7 @@ class GamerScrollApp:
             self.tray.start()
             self.hotkeys.start()
             self._auto_launch_if_needed()
+            self._check_cdp_at_startup()
             if not self.config.browser_exe or not Path(self.config.browser_exe).is_file():
                 logger.info("Browser not configured; opening settings window")
                 self._open_settings()
