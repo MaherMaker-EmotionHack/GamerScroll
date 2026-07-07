@@ -29,7 +29,7 @@ def _get_browser_window_titles(exe_name: str) -> List[str]:
 
     titles: List[str] = []
 
-    def callback(hwnd, _):
+    def callback(hwnd: int, _: Any) -> bool:
         if not win32gui.IsWindowVisible(hwnd):
             return True
         try:
@@ -83,8 +83,8 @@ def find_active_tab_ws(
     # 1. Prefer the tab explicitly marked active/focused by CDP.
     for t in tabs:
         if t.get("active") or t.get("focused"):
-            ws_url = t.get("webSocketDebuggerUrl")
-            title = t.get("title", "")
+            ws_url: Optional[str] = t.get("webSocketDebuggerUrl")
+            title: str = t.get("title", "")
             logger.info("Selected active/focused tab: {} ({})", title, ws_url)
             return ws_url
 
@@ -106,7 +106,7 @@ def find_active_tab_ws(
     ws_url = tabs[0].get("webSocketDebuggerUrl")
     title = tabs[0].get("title", "")
     logger.info("No active tab found; falling back to first tab: {} ({})", title, ws_url)
-    return ws_url
+    return ws_url if ws_url is not None else None
 
 
 _KEY_CODES: dict[str, int] = {

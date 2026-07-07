@@ -9,13 +9,13 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import requests
 from loguru import logger
 
 
-KNOWN_BROWSERS = {
+KNOWN_BROWSERS: Dict[str, Dict[str, Any]] = {
     "Google Chrome": {
         "exe_hints": [
             r"%PROGRAMFILES%\Google\Chrome\Application\chrome.exe",

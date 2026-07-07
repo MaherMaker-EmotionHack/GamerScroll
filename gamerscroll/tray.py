@@ -158,7 +158,7 @@ class TrayManager:
 def _asset_path(name: str) -> Path:
     """Resolve a bundled asset path in both source and PyInstaller builds."""
     if getattr(sys, "frozen", False):
-        base = Path(sys._MEIPASS)
+        base = Path(getattr(sys, "_MEIPASS", ""))  # type: ignore[attr-defined]
     else:
         base = Path(__file__).resolve().parent.parent
     return base / "assets" / name

@@ -19,6 +19,7 @@ def test_send_key_event_sync_retries_on_failure() -> None:
     def mock_run(coro):
         nonlocal call_count
         call_count += 1
+        coro.close()  # prevent "coroutine never awaited" warning
         raise CDPError("Connection refused")
 
     with patch("gamerscroll.cdp.asyncio.run", side_effect=mock_run):
@@ -36,9 +37,10 @@ def test_send_key_event_sync_succeeds_on_second_attempt() -> None:
     def mock_run(coro):
         nonlocal call_count
         call_count += 1
+        coro.close()  # prevent "coroutine never awaited" warning
         if call_count == 1:
             raise CDPError("Connection refused")
-        # Second attempt succeeds (coro is already consumed, so just return)
+        # Second attempt succeeds
         return None
 
     with patch("gamerscroll.cdp.asyncio.run", side_effect=mock_run):

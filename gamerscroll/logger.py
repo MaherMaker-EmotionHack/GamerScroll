@@ -56,7 +56,7 @@ def _redact(message: str) -> str:
     return _PROFILE_RE.sub(r"<USERPROFILE>\1", message)
 
 
-def _patcher(record: dict) -> None:
+def _patcher(record: dict) -> None:  # type: ignore[type-arg]
     """Loguru record patcher that redacts user paths from the message."""
     record["message"] = _redact(record["message"])
 
@@ -107,7 +107,7 @@ def setup_logging(
         effective_level = _DEFAULT_LEVEL
 
     logger.remove()
-    logger.configure(patcher=_patcher)
+    logger.configure(patcher=_patcher)  # type: ignore[arg-type]
 
     log_dir = _log_dir()
     log_dir.mkdir(parents=True, exist_ok=True)
