@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 import time
+from dataclasses import dataclass
 from typing import Any, List, Optional
 
 import requests
@@ -15,6 +16,56 @@ from loguru import logger
 
 class CDPError(Exception):
     """Raised when a CDP operation fails."""
+
+
+class TargetUnavailableError(CDPError):
+    """Raised when a requested CDP page target is no longer present."""
+
+
+@dataclass(frozen=True)
+class CDPTab:
+    """The CDP data needed to identify and reconnect to a page tab."""
+
+    target_id: str
+    title: str
+    url: str
+    websocket_url: str
+
+
+def _get_page_tabs(
+    host: str,
+    port: int,
+    timeout: float,
+    *,
+    allow_empty: bool = False,
+) -> list[dict[str, Any]]:
+    """Fetch the current page tabs from Chrome's JSON discovery endpoint."""
+    url = f"http://{host}:{port}/json"
+    logger.debug("Fetching CDP tab list from {}", url)
+    try:
+        resp = requests.get(url, timeout=timeout)
+        resp.raise_for_status()
+    except requests.RequestException as exc:
+        raise CDPError(f"Cannot reach browser on port {port}: {exc}") from exc
+
+    tabs = [tab for tab in resp.json() if tab.get("type") == "page"]
+    if not tabs and not allow_empty:
+        raise CDPError("No page tabs found.")
+    logger.debug("Found {} page tab(s)", len(tabs))
+    return tabs
+
+
+def _to_cdp_tab(tab: dict[str, Any]) -> Optional[CDPTab]:
+    target_id = tab.get("id")
+    websocket_url = tab.get("webSocketDebuggerUrl")
+    if not isinstance(target_id, str) or not isinstance(websocket_url, str):
+        return None
+    return CDPTab(
+        target_id=target_id,
+        title=str(tab.get("title", "")),
+        url=str(tab.get("url", "")),
+        websocket_url=websocket_url,
+    )
 
 
 def _get_browser_window_titles(exe_name: str) -> List[str]:
@@ -66,27 +117,25 @@ def find_active_tab_ws(
     browser_exe_name: Optional[str] = None,
 ) -> Optional[str]:
     """Return the webSocketDebuggerUrl for the active/focused tab, or best guess."""
-    url = f"http://{host}:{port}/json"
-    logger.debug("Fetching CDP tab list from {}", url)
-    try:
-        resp = requests.get(url, timeout=timeout)
-        resp.raise_for_status()
-    except requests.RequestException as exc:
-        raise CDPError(f"Cannot reach browser on port {port}: {exc}") from exc
+    return find_active_tab(host, port, timeout, browser_exe_name).websocket_url
 
-    tabs = [t for t in resp.json() if t.get("type") == "page"]
-    if not tabs:
-        raise CDPError("No page tabs found.")
 
-    logger.debug("Found {} page tab(s)", len(tabs))
+def find_active_tab(
+    host: str,
+    port: int,
+    timeout: float = 2.0,
+    browser_exe_name: Optional[str] = None,
+) -> CDPTab:
+    """Return the active/focused CDP page tab, falling back to the first page."""
+    tabs = _get_page_tabs(host, port, timeout)
 
     # 1. Prefer the tab explicitly marked active/focused by CDP.
     for t in tabs:
         if t.get("active") or t.get("focused"):
-            ws_url: Optional[str] = t.get("webSocketDebuggerUrl")
-            title: str = t.get("title", "")
-            logger.info("Selected active/focused tab: {} ({})", title, ws_url)
-            return ws_url
+            selected = _to_cdp_tab(t)
+            if selected is not None:
+                logger.info("Selected active/focused tab: {} ({})", selected.title, selected.websocket_url)
+                return selected
 
     # 2. Try to match the browser window title(s) against tab titles.
     if browser_exe_name:
@@ -98,15 +147,35 @@ def find_active_tab_ws(
                 continue
             for t in tabs:
                 if t.get("title", "").strip() == expected.strip():
-                    ws_url = t.get("webSocketDebuggerUrl")
-                    logger.info("Selected tab by window title match '{}': {}", expected, ws_url)
-                    return ws_url
+                    selected = _to_cdp_tab(t)
+                    if selected is not None:
+                        logger.info(
+                            "Selected tab by window title match '{}': {}",
+                            expected,
+                            selected.websocket_url,
+                        )
+                        return selected
 
     # 3. Fallback to the first tab.
-    ws_url = tabs[0].get("webSocketDebuggerUrl")
-    title = tabs[0].get("title", "")
-    logger.info("No active tab found; falling back to first tab: {} ({})", title, ws_url)
-    return ws_url if ws_url is not None else None
+    selected = _to_cdp_tab(tabs[0])
+    if selected is None:
+        raise CDPError("Selected page tab has no usable debugger target.")
+    logger.info(
+        "No active tab found; falling back to first tab: {} ({})",
+        selected.title,
+        selected.websocket_url,
+    )
+    return selected
+
+
+def find_tab_ws(host: str, port: int, target_id: str, timeout: float = 2.0) -> str:
+    """Return a pinned target's WebSocket URL or report that it disappeared."""
+    for tab in _get_page_tabs(host, port, timeout, allow_empty=True):
+        if tab.get("id") == target_id:
+            selected = _to_cdp_tab(tab)
+            if selected is not None:
+                return selected.websocket_url
+    raise TargetUnavailableError("Pinned browser tab is no longer available.")
 
 
 _KEY_CODES: dict[str, int] = {
@@ -121,6 +190,7 @@ async def send_key_event(
     port: int,
     key: str,
     browser_exe_name: Optional[str] = None,
+    target_id: Optional[str] = None,
 ) -> None:
     """Send a keyDown/keyUp pair for a single key via CDP.
 
@@ -128,7 +198,11 @@ async def send_key_event(
         key: The CDP key name, e.g. ``"Space"``, ``"ArrowDown"``, ``"ArrowUp"``.
         browser_exe_name: Optional executable name used to resolve the active tab.
     """
-    ws_url = find_active_tab_ws(host, port, browser_exe_name=browser_exe_name)
+    ws_url = (
+        find_tab_ws(host, port, target_id)
+        if target_id is not None
+        else find_active_tab_ws(host, port, browser_exe_name=browser_exe_name)
+    )
     if not ws_url:
         raise CDPError("No target tab available.")
 
@@ -170,6 +244,7 @@ def send_key_event_sync(
     port: int,
     key: str,
     browser_exe_name: Optional[str] = None,
+    target_id: Optional[str] = None,
     *,
     max_retries: int = 3,
     base_delay: float = 0.5,
@@ -182,8 +257,18 @@ def send_key_event_sync(
     last_exc: Optional[Exception] = None
     for attempt in range(1, max_retries + 1):
         try:
-            asyncio.run(send_key_event(host, port, key, browser_exe_name=browser_exe_name))
+            asyncio.run(
+                send_key_event(
+                    host,
+                    port,
+                    key,
+                    browser_exe_name=browser_exe_name,
+                    target_id=target_id,
+                )
+            )
             return
+        except TargetUnavailableError:
+            raise
         except CDPError as exc:
             last_exc = exc
             if attempt < max_retries:

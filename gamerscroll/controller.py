@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from pathlib import Path
 from typing import Callable, Optional
+from urllib.parse import urlparse
 
 from loguru import logger
 
@@ -41,7 +42,30 @@ class MediaStatus:
     message: str
 
 
-SendActionFn = Callable[[str, int, MediaAction, Optional[str]], None]
+@dataclass(frozen=True)
+class TabTarget:
+    """A CDP tab that can receive media controls during this session."""
+
+    target_id: str
+    title: str
+    url: str
+
+    @property
+    def main_domain(self) -> str:
+        """Return a compact domain label for the Settings pin status."""
+        hostname = urlparse(self.url).hostname or ""
+        labels = hostname.split(".")
+        return ".".join(labels[-2:]) if len(labels) >= 2 else hostname
+
+
+class TargetUnavailableError(Exception):
+    """Raised when a session-only pinned CDP target has disappeared."""
+
+
+SendActionFn = Callable[[str, int, MediaAction, Optional[str], Optional[str]], None]
+FindActiveTabFn = Callable[[str, int, Optional[str]], TabTarget]
+VerifyTargetFn = Callable[[str, int, str], bool]
+PinChangedFn = Callable[[Optional[TabTarget]], None]
 RecoveryFn = Callable[[], bool]
 
 
@@ -64,6 +88,9 @@ class MediaController:
         send_action: Optional[SendActionFn] = None,
         on_status: Optional[Callable[[MediaStatus], None]] = None,
         on_recovery: Optional[RecoveryFn] = None,
+        find_active_tab: Optional[FindActiveTabFn] = None,
+        verify_target: Optional[VerifyTargetFn] = None,
+        on_pin_changed: Optional[PinChangedFn] = None,
         max_consecutive_failures: int = 5,
     ):
         self._config = config
@@ -72,8 +99,12 @@ class MediaController:
         self._max_consecutive_failures = max_consecutive_failures
         self._lock = threading.Lock()
         self._send_action = send_action or self._default_send_action
+        self._find_active_tab = find_active_tab or self._default_find_active_tab
+        self._verify_target = verify_target or self._default_verify_target
+        self._on_pin_changed = on_pin_changed
         self._consecutive_failures = 0
         self._degraded = False
+        self._pinned_tab: Optional[TabTarget] = None
 
     def update_config(self, config: Config) -> None:
         """Replace the active configuration."""
@@ -91,6 +122,7 @@ class MediaController:
         """Dispatch a recognized gesture to the corresponding media action."""
         with self._lock:
             cfg = self._config
+            pinned_tab = self._pinned_tab
             if cfg.disabled:
                 logger.info("Gesture {} ignored (disabled)", gesture.name)
                 self._emit(False, "Media control is disabled.")
@@ -108,22 +140,91 @@ class MediaController:
         logger.debug("Executing media action {} for gesture {}", action.name, gesture.name)
         try:
             exe_name = Path(cfg.browser_exe).name if cfg.browser_exe else None
-            self._send_action(cfg.cdp_host, cfg.cdp_port, action, exe_name)
+            self._send_action(
+                cfg.cdp_host,
+                cfg.cdp_port,
+                action,
+                exe_name,
+                pinned_tab.target_id if pinned_tab else None,
+            )
             with self._lock:
                 self._consecutive_failures = 0
             self._emit(True, action.name.replace("_", " ").title())
+        except TargetUnavailableError as exc:
+            if pinned_tab is None:
+                self._record_action_failure(action, exc)
+                return
+            logger.info("Pinned tab '{}' disappeared; falling back to active tab", pinned_tab.title)
+            self.unpin_current_tab()
+            try:
+                self._send_action(cfg.cdp_host, cfg.cdp_port, action, exe_name, None)
+                with self._lock:
+                    self._consecutive_failures = 0
+                self._emit(True, action.name.replace("_", " ").title())
+            except Exception as exc:
+                self._record_action_failure(action, exc)
         except Exception as exc:
-            logger.error("Media action {} failed: {}", action.name, exc)
-            with self._lock:
-                self._consecutive_failures += 1
-                if self._consecutive_failures >= self._max_consecutive_failures:
-                    self._degraded = True
-                    logger.warning(
-                        "CDP degraded after {} consecutive failures; "
-                        "input disabled until recovery",
-                        self._consecutive_failures,
-                    )
-            self._emit(False, str(exc))
+            self._record_action_failure(action, exc)
+
+    @property
+    def pinned_tab(self) -> Optional[TabTarget]:
+        """Return the session-only pinned tab, if one is currently available."""
+        with self._lock:
+            return self._pinned_tab
+
+    def pin_current_tab(self) -> TabTarget:
+        """Pin the active browser tab for this GamerScroll session."""
+        with self._lock:
+            cfg = self._config
+        exe_name = Path(cfg.browser_exe).name if cfg.browser_exe else None
+        tab = self._find_active_tab(cfg.cdp_host, cfg.cdp_port, exe_name)
+        with self._lock:
+            self._pinned_tab = tab
+        self._notify_pin_changed(tab)
+        logger.info("Pinned browser tab: {} ({})", tab.title, tab.main_domain)
+        return tab
+
+    def unpin_current_tab(self) -> None:
+        """Remove the session-only pin so gestures use the active tab again."""
+        with self._lock:
+            self._pinned_tab = None
+        self._notify_pin_changed(None)
+        logger.info("Removed pinned browser tab")
+
+    def refresh_pinned_tab(self) -> Optional[TabTarget]:
+        """Clear a pin whose CDP target disappeared after a browser restart."""
+        with self._lock:
+            cfg = self._config
+            pinned_tab = self._pinned_tab
+        if pinned_tab is None:
+            return None
+        try:
+            available = self._verify_target(cfg.cdp_host, cfg.cdp_port, pinned_tab.target_id)
+        except Exception as exc:
+            logger.debug("Could not verify pinned tab '{}': {}", pinned_tab.title, exc)
+            return pinned_tab
+        if available:
+            return pinned_tab
+        logger.info("Pinned tab '{}' is no longer available", pinned_tab.title)
+        self.unpin_current_tab()
+        return None
+
+    def _notify_pin_changed(self, pinned_tab: Optional[TabTarget]) -> None:
+        if self._on_pin_changed:
+            self._on_pin_changed(pinned_tab)
+
+    def _record_action_failure(self, action: MediaAction, exc: Exception) -> None:
+        logger.error("Media action {} failed: {}", action.name, exc)
+        with self._lock:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= self._max_consecutive_failures:
+                self._degraded = True
+                logger.warning(
+                    "CDP degraded after {} consecutive failures; "
+                    "input disabled until recovery",
+                    self._consecutive_failures,
+                )
+        self._emit(False, str(exc))
 
     def check_health(self) -> bool:
         """Probe the CDP endpoint and attempt recovery if unreachable.
@@ -144,6 +245,7 @@ class MediaController:
                     logger.info("CDP recovered — re-enabling input")
                 self._degraded = False
                 self._consecutive_failures = 0
+            self.refresh_pinned_tab()
             self._emit(True, "CDP reachable")
             return True
 
@@ -159,6 +261,7 @@ class MediaController:
                 with self._lock:
                     self._degraded = False
                     self._consecutive_failures = 0
+                self.refresh_pinned_tab()
                 self._emit(True, "CDP recovered")
                 return True
 
@@ -177,10 +280,43 @@ class MediaController:
         port: int,
         action: MediaAction,
         browser_exe_name: Optional[str] = None,
+        target_id: Optional[str] = None,
     ) -> None:
+        from gamerscroll.cdp import TargetUnavailableError as CDPTargetUnavailableError
         from gamerscroll.cdp import send_key_event_sync
 
         key = _ACTION_TO_KEY.get(action)
         if key is None:
             raise ValueError(f"No CDP key mapping for action {action}")
-        send_key_event_sync(host, port, key, browser_exe_name=browser_exe_name)
+        try:
+            send_key_event_sync(
+                host,
+                port,
+                key,
+                browser_exe_name=browser_exe_name,
+                target_id=target_id,
+            )
+        except CDPTargetUnavailableError as exc:
+            raise TargetUnavailableError(str(exc)) from exc
+
+    @staticmethod
+    def _default_find_active_tab(
+        host: str,
+        port: int,
+        browser_exe_name: Optional[str] = None,
+    ) -> TabTarget:
+        from gamerscroll.cdp import find_active_tab
+
+        tab = find_active_tab(host, port, browser_exe_name=browser_exe_name)
+        return TabTarget(tab.target_id, tab.title, tab.url)
+
+    @staticmethod
+    def _default_verify_target(host: str, port: int, target_id: str) -> bool:
+        from gamerscroll.cdp import TargetUnavailableError as CDPTargetUnavailableError
+        from gamerscroll.cdp import find_tab_ws
+
+        try:
+            find_tab_ws(host, port, target_id)
+            return True
+        except CDPTargetUnavailableError:
+            return False

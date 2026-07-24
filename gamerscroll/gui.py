@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 
 from gamerscroll.browser import BrowserInfo, detect_browsers, list_profiles
 from gamerscroll.config import Config
+from gamerscroll.controller import TabTarget
 from gamerscroll.logger import _log_dir
 
 
@@ -88,6 +89,9 @@ class SettingsWindow(QWidget):
     test_pause_play_requested = pyqtSignal()
     test_next_requested = pyqtSignal()
     test_prev_requested = pyqtSignal()
+    pin_current_tab_requested = pyqtSignal()
+    unpin_current_tab_requested = pyqtSignal()
+    pin_status_changed = pyqtSignal(object)
 
     def __init__(self, config: Config, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -95,6 +99,7 @@ class SettingsWindow(QWidget):
         self.setMinimumWidth(500)
         self._config = config
         self._browsers: List[BrowserInfo] = []
+        self.pin_status_changed.connect(self.set_pin_status)
         self._build_ui()
         self._refresh_browser_list()
         self._load_config_into_ui()
@@ -150,6 +155,23 @@ class SettingsWindow(QWidget):
         browser_layout.addRow("", self._manual_label)
 
         layout.addWidget(browser_group)
+
+        # Pinned tab group
+        pinned_tab_group = QGroupBox("Pinned Tab")
+        pinned_tab_layout = QFormLayout(pinned_tab_group)
+        self._pin_status_label = QLabel("No tab pinned. Gestures control the active browser tab.")
+        self._pin_status_label.setWordWrap(True)
+        pinned_tab_layout.addRow("Status:", self._pin_status_label)
+
+        pin_current_btn = QPushButton("Pin Current Tab")
+        pin_current_btn.clicked.connect(self.pin_current_tab_requested.emit)
+        pinned_tab_layout.addRow("", pin_current_btn)
+
+        self._unpin_btn = QPushButton("Unpin")
+        self._unpin_btn.setEnabled(False)
+        self._unpin_btn.clicked.connect(self.unpin_current_tab_requested.emit)
+        pinned_tab_layout.addRow("", self._unpin_btn)
+        layout.addWidget(pinned_tab_group)
 
         # Media key group
         media_key_group = QGroupBox("Media Key")
@@ -320,6 +342,23 @@ class SettingsWindow(QWidget):
         self._refresh_browser_list()
         self._update_warning_visibility()
         self._update_manual_label()
+
+    def set_pin_status(self, pinned_tab: Optional[TabTarget]) -> None:
+        """Display the current session-only pin state in Settings."""
+        if pinned_tab is None:
+            self._pin_status_label.setText(
+                "No tab pinned. Gestures control the active browser tab."
+            )
+            self._unpin_btn.setEnabled(False)
+            return
+        self._pin_status_label.setText(
+            f"Pinned: {pinned_tab.title}\nDomain: {pinned_tab.main_domain or 'unknown'}"
+        )
+        self._unpin_btn.setEnabled(True)
+
+    def show_pin_error(self, message: str) -> None:
+        """Explain why the focused browser tab could not be pinned."""
+        QMessageBox.warning(self, "Could not pin current tab", message)
 
     def _update_warning_visibility(self) -> None:
         self._auto_launch_warning.setVisible(self._auto_launch_check.isChecked())

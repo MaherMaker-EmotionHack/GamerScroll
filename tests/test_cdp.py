@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gamerscroll.cdp import CDPError, send_key_event
+from gamerscroll.cdp import CDPError, TargetUnavailableError, find_tab_ws, send_key_event
 
 
 @pytest.mark.asyncio
@@ -70,6 +70,34 @@ async def test_send_key_event_wraps_websocket_errors() -> None:
         with patch("websockets.connect", side_effect=ConnectionRefusedError("nope")):
             with pytest.raises(CDPError, match="Connection error"):
                 await send_key_event("127.0.0.1", 9222, "Space")
+
+
+def test_find_tab_ws_resolves_a_pinned_target_id() -> None:
+    response = MagicMock()
+    response.json.return_value = [
+        {
+            "id": "other-tab",
+            "type": "page",
+            "webSocketDebuggerUrl": "ws://other",
+        },
+        {
+            "id": "pinned-tab",
+            "type": "page",
+            "webSocketDebuggerUrl": "ws://pinned",
+        },
+    ]
+
+    with patch("gamerscroll.cdp.requests.get", return_value=response):
+        assert find_tab_ws("127.0.0.1", 9222, "pinned-tab") == "ws://pinned"
+
+
+def test_find_tab_ws_reports_a_disappeared_pinned_target() -> None:
+    response = MagicMock()
+    response.json.return_value = []
+
+    with patch("gamerscroll.cdp.requests.get", return_value=response):
+        with pytest.raises(TargetUnavailableError, match="no longer available"):
+            find_tab_ws("127.0.0.1", 9222, "closed-tab")
 
 
 def async_context_manager(mock: AsyncMock) -> MagicMock:

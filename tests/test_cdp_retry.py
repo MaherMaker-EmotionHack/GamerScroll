@@ -6,9 +6,14 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from gamerscroll.cdp import CDPError, check_cdp_reachable, send_key_event_sync
+from gamerscroll.cdp import (
+    CDPError,
+    TargetUnavailableError,
+    check_cdp_reachable,
+    send_key_event_sync,
+)
 from gamerscroll.config import Config
-from gamerscroll.controller import MediaController, MediaStatus
+from gamerscroll.controller import MediaController, MediaStatus, TabTarget
 from gamerscroll.gestures import Gesture
 
 
@@ -50,6 +55,22 @@ def test_send_key_event_sync_succeeds_on_second_attempt() -> None:
     assert call_count == 2
 
 
+def test_send_key_event_sync_does_not_retry_a_missing_pinned_target() -> None:
+    call_count = 0
+
+    def mock_run(coro):
+        nonlocal call_count
+        call_count += 1
+        coro.close()
+        raise TargetUnavailableError("Pinned browser tab is no longer available.")
+
+    with patch("gamerscroll.cdp.asyncio.run", side_effect=mock_run):
+        with pytest.raises(TargetUnavailableError, match="no longer available"):
+            send_key_event_sync("127.0.0.1", 9222, "Space", target_id="closed-tab")
+
+    assert call_count == 1
+
+
 def test_check_cdp_reachable_returns_true_when_ok() -> None:
     with patch("gamerscroll.cdp.find_active_tab_ws", return_value="ws://tab"):
         assert check_cdp_reachable("127.0.0.1", 9222) is True
@@ -85,7 +106,7 @@ def test_controller_degrades_after_consecutive_failures() -> None:
     """After max_consecutive_failures, the controller enters degraded mode."""
     failures = []
 
-    def failing_send(host, port, action, browser_exe_name=None):
+    def failing_send(host, port, action, browser_exe_name=None, target_id=None):
         raise RuntimeError("CDP unreachable")
 
     controller, status_log = make_controller_with_health(
@@ -139,6 +160,22 @@ def test_controller_check_health_triggers_recovery() -> None:
     assert controller._degraded is False
 
 
+def test_successful_recovery_removes_a_pin_from_the_restarted_browser() -> None:
+    pinned_tab = TabTarget("old-tab", "YouTube", "https://www.youtube.com/watch?v=1")
+    controller = MediaController(
+        Config(browser_exe=r"C:\Browser\comet.exe"),
+        on_recovery=lambda: True,
+        find_active_tab=lambda host, port, browser_exe_name: pinned_tab,
+        verify_target=lambda host, port, target_id: False,
+    )
+    controller.pin_current_tab()
+
+    with patch("gamerscroll.cdp.check_cdp_reachable", return_value=False):
+        assert controller.check_health() is True
+
+    assert controller.pinned_tab is None
+
+
 def test_controller_check_health_degrades_when_recovery_fails() -> None:
     """check_health should set degraded when recovery callback returns False."""
     def on_recovery():
@@ -168,7 +205,7 @@ def test_controller_resets_failures_on_success() -> None:
     """A successful action should reset the consecutive failure counter."""
     call_count = 0
 
-    def flaky_send(host, port, action, browser_exe_name=None):
+    def flaky_send(host, port, action, browser_exe_name=None, target_id=None):
         nonlocal call_count
         call_count += 1
         if call_count <= 1:

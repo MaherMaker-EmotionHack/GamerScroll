@@ -8,7 +8,13 @@ from typing import Callable, Optional
 import pytest
 
 from gamerscroll.config import Config
-from gamerscroll.controller import MediaAction, MediaController, MediaStatus
+from gamerscroll.controller import (
+    MediaAction,
+    MediaController,
+    MediaStatus,
+    TabTarget,
+    TargetUnavailableError,
+)
 from gamerscroll.gestures import Gesture
 
 
@@ -16,6 +22,7 @@ from gamerscroll.gestures import Gesture
 class SentAction:
     action: MediaAction
     browser_exe_name: Optional[str]
+    target_id: Optional[str] = None
 
 
 class FakeSender:
@@ -24,6 +31,7 @@ class FakeSender:
     def __init__(self) -> None:
         self.actions: list[SentAction] = []
         self.error_message: Optional[str] = None
+        self.unavailable_target_ids: set[str] = set()
 
     def __call__(
         self,
@@ -31,10 +39,33 @@ class FakeSender:
         port: int,
         action: MediaAction,
         browser_exe_name: Optional[str] = None,
+        target_id: Optional[str] = None,
     ) -> None:
         if self.error_message is not None:
             raise RuntimeError(self.error_message)
-        self.actions.append(SentAction(action, browser_exe_name))
+        if target_id in self.unavailable_target_ids:
+            raise TargetUnavailableError("Pinned browser tab is no longer available.")
+        self.actions.append(SentAction(action, browser_exe_name, target_id))
+
+
+class FakeTargetFinder:
+    """Returns the current browser tab without talking to CDP."""
+
+    def __init__(self, target: TabTarget) -> None:
+        self.target = target
+
+    def __call__(self, host: str, port: int, browser_exe_name: Optional[str]) -> TabTarget:
+        return self.target
+
+
+class FakeTargetVerifier:
+    """Reports whether a session target is still present in CDP."""
+
+    def __init__(self, available: bool) -> None:
+        self.available = available
+
+    def __call__(self, host: str, port: int, target_id: str) -> bool:
+        return self.available
 
 
 def make_controller(
@@ -135,3 +166,81 @@ def test_browser_exe_name_is_extracted_from_path() -> None:
     controller.handle_gesture(Gesture.SHORT_PRESS)
 
     assert sender.actions[0].browser_exe_name == "brave.exe"
+
+
+def test_pin_current_tab_targets_that_tab_for_later_gestures() -> None:
+    sender = FakeSender()
+    selected_tab = TabTarget("pinned-id", "YouTube", "https://www.youtube.com/watch?v=1")
+    controller, _ = make_controller(sender)
+    controller = MediaController(
+        config=Config(browser_exe=r"C:\Browser\brave.exe"),
+        send_action=sender,
+        find_active_tab=FakeTargetFinder(selected_tab),
+    )
+
+    assert controller.pin_current_tab() == selected_tab
+
+    controller.handle_gesture(Gesture.SHORT_PRESS)
+
+    assert sender.actions == [SentAction(MediaAction.PAUSE_PLAY, "brave.exe", "pinned-id")]
+
+
+def test_unpin_current_tab_returns_gestures_to_the_active_tab() -> None:
+    sender = FakeSender()
+    selected_tab = TabTarget("pinned-id", "YouTube", "https://www.youtube.com/watch?v=1")
+    controller = MediaController(
+        config=Config(browser_exe=r"C:\Browser\brave.exe"),
+        send_action=sender,
+        find_active_tab=FakeTargetFinder(selected_tab),
+    )
+    controller.pin_current_tab()
+
+    controller.unpin_current_tab()
+    controller.handle_gesture(Gesture.SHORT_PRESS)
+
+    assert controller.pinned_tab is None
+    assert sender.actions == [SentAction(MediaAction.PAUSE_PLAY, "brave.exe", None)]
+
+
+def test_missing_pinned_tab_falls_back_to_the_active_tab() -> None:
+    sender = FakeSender()
+    sender.unavailable_target_ids.add("closed-tab")
+    selected_tab = TabTarget("closed-tab", "Closed video", "https://www.youtube.com/watch?v=1")
+    controller = MediaController(
+        config=Config(browser_exe=r"C:\Browser\brave.exe"),
+        send_action=sender,
+        find_active_tab=FakeTargetFinder(selected_tab),
+    )
+    controller.pin_current_tab()
+
+    controller.handle_gesture(Gesture.DOUBLE_PRESS)
+
+    assert controller.pinned_tab is None
+    assert sender.actions == [SentAction(MediaAction.NEXT, "brave.exe", None)]
+
+
+def test_a_new_controller_session_has_no_pinned_tab() -> None:
+    selected_tab = TabTarget("pinned-id", "YouTube", "https://www.youtube.com/watch?v=1")
+    first_session = MediaController(
+        config=Config(),
+        find_active_tab=FakeTargetFinder(selected_tab),
+    )
+    first_session.pin_current_tab()
+
+    restarted_session = MediaController(config=Config())
+
+    assert first_session.pinned_tab == selected_tab
+    assert restarted_session.pinned_tab is None
+
+
+def test_refreshing_after_a_browser_restart_removes_the_pin() -> None:
+    selected_tab = TabTarget("old-tab", "YouTube", "https://www.youtube.com/watch?v=1")
+    controller = MediaController(
+        config=Config(),
+        find_active_tab=FakeTargetFinder(selected_tab),
+        verify_target=FakeTargetVerifier(available=False),
+    )
+    controller.pin_current_tab()
+
+    assert controller.refresh_pinned_tab() is None
+    assert controller.pinned_tab is None

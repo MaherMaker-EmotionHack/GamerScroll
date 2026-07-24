@@ -23,7 +23,7 @@ from gamerscroll.browser import (
     wait_for_cdp,
 )
 from gamerscroll.config import Config
-from gamerscroll.controller import MediaController, MediaStatus
+from gamerscroll.controller import MediaController, MediaStatus, TabTarget
 from gamerscroll.gui import SettingsWindow
 from gamerscroll.gestures import Gesture, GestureDetector
 from gamerscroll.hotkeys import HotkeyListener
@@ -73,6 +73,7 @@ class GamerScrollApp:
             self.config,
             on_status=self._on_controller_status,
             on_recovery=self._recover_cdp,
+            on_pin_changed=self._on_pin_changed,
         )
         logger.info("Creating GestureDetector")
         self.detector = GestureDetector(
@@ -135,10 +136,39 @@ class GamerScrollApp:
             self.settings_window.test_prev_requested.connect(
                 lambda: self.controller.handle_gesture(Gesture.LONG_HOLD)
             )
+            self.settings_window.pin_current_tab_requested.connect(self._pin_current_tab)
+            self.settings_window.unpin_current_tab_requested.connect(self._unpin_current_tab)
             self.settings_window.destroyed.connect(lambda: setattr(self, "settings_window", None))
+        self.settings_window.set_pin_status(self.controller.refresh_pinned_tab())
         self.settings_window.show()
         self.settings_window.raise_()
         self.settings_window.activateWindow()
+
+    def _pin_current_tab(self) -> None:
+        """Pin the browser's current tab and refresh the Settings status."""
+        try:
+            pinned_tab = self.controller.pin_current_tab()
+        except Exception as exc:
+            logger.warning("Could not pin current tab: {}", exc)
+            self.tray.set_status("Could not pin current tab")
+            if self.settings_window is not None:
+                self.settings_window.show_pin_error(str(exc))
+            return
+        if self.settings_window is not None:
+            self.settings_window.set_pin_status(pinned_tab)
+        self.tray.set_status(f"Pinned tab: {pinned_tab.main_domain or pinned_tab.title}")
+
+    def _unpin_current_tab(self) -> None:
+        """Remove the current session-only pin and refresh Settings."""
+        self.controller.unpin_current_tab()
+        if self.settings_window is not None:
+            self.settings_window.set_pin_status(None)
+        self.tray.set_status("Using active browser tab")
+
+    def _on_pin_changed(self, pinned_tab: Optional[TabTarget]) -> None:
+        """Queue pin-status changes onto the Settings window's Qt thread."""
+        if self.settings_window is not None:
+            self.settings_window.pin_status_changed.emit(pinned_tab)
 
     def _toggle_disabled(self) -> None:
         self.config.disabled = not self.config.disabled
