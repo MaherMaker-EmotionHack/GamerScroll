@@ -1,5 +1,7 @@
 # Gesture-to-action mapping: short=pause, double=next, long=prev
 
+**Status:** Superseded by ADR-0004.
+
 Short Press maps to Pause/Play, Double Press maps to Next, Long Hold maps to Prev.
 
 **Considered options:**
