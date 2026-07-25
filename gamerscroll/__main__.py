@@ -130,6 +130,11 @@ class GamerScrollApp:
             self.settings_window.generic_binding_test_requested.connect(
                 self.controller.test_generic_binding
             )
+            self.settings_window.quick_profile_setup_requested.connect(self._open_quick_profile_setup)
+            self.settings_window.site_profile_binding_test_requested.connect(
+                self.controller.test_site_profile_binding
+            )
+            self.settings_window.site_profile_save_requested.connect(self._save_site_profile)
             self.settings_window.pin_current_tab_requested.connect(self._pin_current_tab)
             self.settings_window.unpin_current_tab_requested.connect(self._unpin_current_tab)
             self.settings_window.destroyed.connect(lambda: setattr(self, "settings_window", None))
@@ -158,6 +163,40 @@ class GamerScrollApp:
         if self.settings_window is not None:
             self.settings_window.set_pin_status(None)
         self.tray.set_status("Using active browser tab")
+
+    def _open_quick_profile_setup(self) -> None:
+        """Open the Site Profile form for the focused Profile Setup Target."""
+        try:
+            setup = self.controller.begin_site_profile_setup()
+        except Exception as exc:
+            logger.warning("Could not open Quick Profile Setup: {}", exc)
+            self.tray.set_status("Could not open Quick Profile Setup")
+            if self.settings_window is not None:
+                self.settings_window.show_site_profile_error(
+                    "Could not open Quick Profile Setup",
+                    str(exc),
+                )
+            return
+        if self.settings_window is not None:
+            self.settings_window.show_site_profile_setup(setup)
+
+    def _save_site_profile(self, domain: str, bindings: object) -> None:
+        """Persist bindings captured by Quick Profile Setup."""
+        if not isinstance(bindings, dict):
+            logger.warning("Site Profile save used an invalid binding payload")
+            return
+        try:
+            self.controller.save_site_profile(domain, bindings)
+            self.config.save()
+        except (OSError, ValueError) as exc:
+            logger.warning("Could not save Site Profile {}: {}", domain, exc)
+            self.tray.set_status("Could not save Site Profile")
+            if self.settings_window is not None:
+                self.settings_window.show_site_profile_error("Could not save Site Profile", str(exc))
+            return
+        self.tray.set_status(f"Saved Site Profile: {domain}")
+        if self.settings_window is not None:
+            self.settings_window.set_status(f"Saved Site Profile: {domain}")
 
     def _on_pin_changed(self, pinned_tab: Optional[TabTarget]) -> None:
         """Queue pin-status changes onto the Settings window's Qt thread."""

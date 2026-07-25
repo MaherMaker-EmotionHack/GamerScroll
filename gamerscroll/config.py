@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, List
 
 from loguru import logger
+import tldextract
 
 
 GESTURE_BINDING_NAMES = ("short_press", "double_press", "long_hold")
@@ -23,6 +24,28 @@ DEFAULT_GENERIC_BINDINGS: dict[str, str | None] = {
     "double_press": "ArrowDown",
     "long_hold": "ArrowUp",
 }
+
+
+_PUBLIC_SUFFIX_EXTRACTOR = tldextract.TLDExtract(suffix_list_urls=())
+
+
+def main_domain_from_url(url: str) -> str:
+    """Return the registrable domain used to select a Site Profile.
+
+    The browser targets local development pages as well as public sites, so
+    localhost and IP addresses deliberately remain their own keys.  The
+    bundled Public Suffix List is used offline, avoiding a network lookup while
+    correctly grouping country-code domains and their subdomains.
+    """
+    from urllib.parse import urlparse
+
+    hostname = (urlparse(url).hostname or "").lower().rstrip(".")
+    if not hostname:
+        return ""
+    extracted = _PUBLIC_SUFFIX_EXTRACTOR(hostname)
+    if not extracted.domain or not extracted.suffix:
+        return hostname
+    return f"{extracted.domain}.{extracted.suffix}"
 
 
 def normalize_keyboard_chord(value: object) -> str | None:
@@ -88,6 +111,29 @@ def sanitize_generic_bindings(value: object) -> dict[str, str | None]:
     return bindings
 
 
+def sanitize_site_profiles(value: object) -> dict[str, dict[str, str | None]]:
+    """Accept only domain-keyed, complete Site Profile binding maps."""
+    if not isinstance(value, dict):
+        return {}
+    profiles: dict[str, dict[str, str | None]] = {}
+    for raw_domain, raw_bindings in value.items():
+        if not isinstance(raw_domain, str):
+            continue
+        domain = raw_domain.lower().strip().rstrip(".")
+        if not domain or any(char.isspace() for char in domain):
+            continue
+        raw = raw_bindings if isinstance(raw_bindings, dict) else {}
+        profiles[domain] = {
+            name: (
+                None
+                if raw.get(name) is None
+                else normalize_keyboard_chord(raw.get(name))
+            )
+            for name in GESTURE_BINDING_NAMES
+        }
+    return profiles
+
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "browser_name": "Comet",
     "browser_exe": "",
@@ -104,6 +150,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "disabled": False,
     "log_level": "INFO",
     "generic_bindings": DEFAULT_GENERIC_BINDINGS,
+    "site_profiles": {},
 }
 
 
@@ -126,6 +173,7 @@ class Config:
     generic_bindings: dict[str, str | None] = field(
         default_factory=lambda: dict(DEFAULT_GENERIC_BINDINGS)
     )
+    site_profiles: dict[str, dict[str, str | None]] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":
@@ -182,6 +230,14 @@ class Config:
             if not isinstance(current, bool):
                 setattr(self, field_name, bool(current))
         self.generic_bindings = sanitize_generic_bindings(self.generic_bindings)
+        self.site_profiles = sanitize_site_profiles(self.site_profiles)
+
+    def set_site_profile(self, domain: str, bindings: object) -> None:
+        """Store a validated Site Profile under its main-domain key."""
+        profiles = sanitize_site_profiles({domain: bindings})
+        if not profiles:
+            raise ValueError("A Site Profile needs a valid main domain.")
+        self.site_profiles[domain.lower().strip().rstrip(".")] = next(iter(profiles.values()))
 
     def save(self, path: Path | None = None) -> None:
         if path is None:
@@ -228,4 +284,10 @@ class Config:
                 errors.append(f"Unknown generic gesture binding: {name}")
             elif binding is not None and normalize_keyboard_chord(binding) is None:
                 errors.append(f"Invalid keyboard chord for {name}: {binding}")
+        for domain, bindings in self.site_profiles.items():
+            if not domain:
+                errors.append("Site Profile has an empty domain.")
+            for name, binding in bindings.items():
+                if binding is not None and normalize_keyboard_chord(binding) is None:
+                    errors.append(f"Invalid Site Profile chord for {domain}/{name}: {binding}")
         return errors

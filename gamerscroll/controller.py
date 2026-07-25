@@ -6,11 +6,15 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
-from urllib.parse import urlparse
 
 from loguru import logger
 
-from gamerscroll.config import Config, GESTURE_BINDING_NAMES, normalize_keyboard_chord
+from gamerscroll.config import (
+    Config,
+    GESTURE_BINDING_NAMES,
+    main_domain_from_url,
+    normalize_keyboard_chord,
+)
 from gamerscroll.gestures import Gesture
 
 
@@ -37,10 +41,17 @@ class TabTarget:
 
     @property
     def main_domain(self) -> str:
-        """Return a compact domain label for the Settings pin status."""
-        hostname = urlparse(self.url).hostname or ""
-        labels = hostname.split(".")
-        return ".".join(labels[-2:]) if len(labels) >= 2 else hostname
+        """Return the Site Profile domain for this tab."""
+        return main_domain_from_url(self.url)
+
+
+@dataclass(frozen=True)
+class SiteProfileSetup:
+    """The active tab and editable bindings used by Quick Profile Setup."""
+
+    target: TabTarget
+    domain: str
+    bindings: dict[str, str | None]
 
 
 class TargetUnavailableError(Exception):
@@ -90,6 +101,7 @@ class MediaController:
         self._consecutive_failures = 0
         self._degraded = False
         self._pinned_tab: Optional[TabTarget] = None
+        self._profile_setup_target: Optional[TabTarget] = None
 
     def update_config(self, config: Config) -> None:
         """Replace the active configuration."""
@@ -104,7 +116,7 @@ class MediaController:
         _ = old
 
     def handle_gesture(self, gesture: Gesture) -> None:
-        """Dispatch a recognized gesture to its Generic Profile binding."""
+        """Dispatch a recognized gesture to the selected target's profile."""
         with self._lock:
             cfg = self._config
             pinned_tab = self._pinned_tab
@@ -120,13 +132,34 @@ class MediaController:
         if gesture not in _GESTURE_TO_BINDING_NAME:
             logger.warning("Unknown gesture: {}", gesture)
             return
-        chord = self.resolve_generic_binding(gesture)
+        target = pinned_tab
+        if target is None and cfg.site_profiles:
+            try:
+                target = self._find_active_tab(
+                    cfg.cdp_host,
+                    cfg.cdp_port,
+                    Path(cfg.browser_exe).name if cfg.browser_exe else None,
+                )
+            except Exception as exc:
+                self._record_action_failure("profile target", exc)
+                return
+
+        chord = self.resolve_binding(gesture, target) if target else self.resolve_generic_binding(gesture)
         if chord is None:
-            logger.info("Gesture {} has no assigned Generic Profile binding", gesture.name)
+            logger.info(
+                "Gesture {} has no assigned binding for {}",
+                gesture.name,
+                target.main_domain if target else "Generic Profile",
+            )
             self._emit(True, f"{gesture.name.replace('_', ' ').title()} is unassigned.")
             return
 
-        logger.debug("Sending Generic Profile chord {} for gesture {}", chord, gesture.name)
+        logger.debug(
+            "Sending {} chord {} for gesture {}",
+            target.main_domain if target else "Generic Profile",
+            chord,
+            gesture.name,
+        )
         try:
             exe_name = Path(cfg.browser_exe).name if cfg.browser_exe else None
             self._send_action(
@@ -134,7 +167,7 @@ class MediaController:
                 cfg.cdp_port,
                 chord,
                 exe_name,
-                pinned_tab.target_id if pinned_tab else None,
+                target.target_id if target else None,
             )
             with self._lock:
                 self._consecutive_failures = 0
@@ -146,10 +179,27 @@ class MediaController:
             logger.info("Pinned tab '{}' disappeared; falling back to active tab", pinned_tab.title)
             self.unpin_current_tab()
             try:
-                self._send_action(cfg.cdp_host, cfg.cdp_port, chord, exe_name, None)
+                fallback_target: Optional[TabTarget] = None
+                if cfg.site_profiles:
+                    fallback_target = self._find_active_tab(cfg.cdp_host, cfg.cdp_port, exe_name)
+                fallback_chord = (
+                    self.resolve_binding(gesture, fallback_target)
+                    if fallback_target
+                    else self.resolve_generic_binding(gesture)
+                )
+                if fallback_chord is None:
+                    self._emit(True, f"{gesture.name.replace('_', ' ').title()} is unassigned.")
+                    return
+                self._send_action(
+                    cfg.cdp_host,
+                    cfg.cdp_port,
+                    fallback_chord,
+                    exe_name,
+                    fallback_target.target_id if fallback_target else None,
+                )
                 with self._lock:
                     self._consecutive_failures = 0
-                self._emit(True, f"Sent {chord}")
+                self._emit(True, f"Sent {fallback_chord}")
             except Exception as exc:
                 self._record_action_failure(chord, exc)
         except Exception as exc:
@@ -163,6 +213,17 @@ class MediaController:
             return None
         with self._lock:
             chord = self._config.generic_bindings.get(binding_name)
+        return normalize_keyboard_chord(chord) if chord is not None else None
+
+    def resolve_binding(self, gesture: Gesture, target: TabTarget) -> str | None:
+        """Return the target's Site Profile binding or its Generic fallback."""
+        binding_name = _GESTURE_TO_BINDING_NAME.get(gesture)
+        if binding_name is None:
+            logger.warning("Unknown gesture: {}", gesture)
+            return None
+        with self._lock:
+            profile = self._config.site_profiles.get(target.main_domain)
+            chord = profile.get(binding_name) if profile is not None else self._config.generic_bindings.get(binding_name)
         return normalize_keyboard_chord(chord) if chord is not None else None
 
     def test_generic_binding(self, binding_name: str) -> None:
@@ -186,6 +247,44 @@ class MediaController:
             self._emit(True, f"Test sent {chord}")
         except Exception as exc:
             self._record_action_failure(chord, exc)
+
+    def begin_site_profile_setup(self) -> SiteProfileSetup:
+        """Create or edit the Site Profile for the active Profile Setup Target."""
+        with self._lock:
+            cfg = self._config
+        exe_name = Path(cfg.browser_exe).name if cfg.browser_exe else None
+        target = self._find_active_tab(cfg.cdp_host, cfg.cdp_port, exe_name)
+        domain = target.main_domain
+        if not domain:
+            raise ValueError("The active browser tab has no usable domain.")
+        with self._lock:
+            bindings = dict(cfg.site_profiles.get(domain, cfg.generic_bindings))
+            self._profile_setup_target = target
+        return SiteProfileSetup(target=target, domain=domain, bindings=bindings)
+
+    def test_site_profile_binding(self, chord: str) -> None:
+        """Send a captured Site Profile chord to the Profile Setup Target."""
+        normalized = normalize_keyboard_chord(chord)
+        if normalized is None:
+            self._emit(False, "This binding is unassigned.")
+            return
+        with self._lock:
+            cfg = self._config
+            target = self._profile_setup_target
+        if target is None:
+            self._emit(False, "Open Quick Profile Setup before testing a binding.")
+            return
+        try:
+            exe_name = Path(cfg.browser_exe).name if cfg.browser_exe else None
+            self._send_action(cfg.cdp_host, cfg.cdp_port, normalized, exe_name, target.target_id)
+            self._emit(True, f"Test sent {normalized}")
+        except Exception as exc:
+            self._record_action_failure(normalized, exc)
+
+    def save_site_profile(self, domain: str, bindings: dict[str, str | None]) -> None:
+        """Update the persistent Site Profile selected by Quick Profile Setup."""
+        with self._lock:
+            self._config.set_site_profile(domain, bindings)
 
     @property
     def pinned_tab(self) -> Optional[TabTarget]:

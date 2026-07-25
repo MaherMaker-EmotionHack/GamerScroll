@@ -29,7 +29,7 @@ from PyQt6.QtWidgets import (
 
 from gamerscroll.browser import BrowserInfo, detect_browsers, list_profiles
 from gamerscroll.config import Config, GESTURE_BINDING_NAMES, normalize_keyboard_chord
-from gamerscroll.controller import TabTarget
+from gamerscroll.controller import SiteProfileSetup, TabTarget
 from gamerscroll.logger import _log_dir
 
 
@@ -139,12 +139,100 @@ class ChordCaptureDialog(QDialog):
         self.accept()
 
 
+def capture_chord(label: str, target: QLineEdit, parent: QWidget) -> None:
+    """Capture a Keyboard Chord into a read-only binding field."""
+    dialog = ChordCaptureDialog(label, parent)
+    dialog.chord_captured.connect(target.setText)
+    dialog.exec()
+
+
+class SiteProfileDialog(QDialog):
+    """Edit the Site Profile selected by Quick Profile Setup."""
+
+    binding_test_requested = pyqtSignal(str)
+    profile_saved = pyqtSignal(str, object)
+
+    def __init__(self, setup: SiteProfileSetup, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._setup = setup
+        self._binding_edits: dict[str, QLineEdit] = {}
+        self.setWindowTitle(f"Site Profile: {setup.domain}")
+        self.setMinimumWidth(500)
+
+        layout = QVBoxLayout(self)
+        target_label = QLabel(
+            f"Profile Setup Target: <b>{setup.target.title or setup.domain}</b><br>"
+            f"Main domain: <b>{setup.domain}</b>"
+        )
+        target_label.setWordWrap(True)
+        layout.addWidget(target_label)
+
+        help_label = QLabel(
+            "Capture one page-level key or a simultaneous shortcut for each gesture. "
+            "Test sends the captured binding to this Profile Setup Target before saving."
+        )
+        help_label.setWordWrap(True)
+        layout.addWidget(help_label)
+
+        bindings_layout = QFormLayout()
+        labels = {
+            "short_press": "Short press:",
+            "double_press": "Double press:",
+            "long_hold": "Long hold:",
+        }
+        for binding_name in GESTURE_BINDING_NAMES:
+            edit = QLineEdit(setup.bindings.get(binding_name) or "")
+            edit.setReadOnly(True)
+            capture_btn = QPushButton("Capture")
+            capture_btn.clicked.connect(
+                lambda _checked=False, name=binding_name, field=edit: self._capture_chord(name, field)
+            )
+            clear_btn = QPushButton("Clear")
+            clear_btn.clicked.connect(edit.clear)
+            test_btn = QPushButton("Test")
+            test_btn.clicked.connect(
+                lambda _checked=False, field=edit: self.binding_test_requested.emit(field.text().strip())
+            )
+            row = QHBoxLayout()
+            row.addWidget(edit)
+            row.addWidget(capture_btn)
+            row.addWidget(clear_btn)
+            row.addWidget(test_btn)
+            bindings_layout.addRow(labels[binding_name], row)
+            self._binding_edits[binding_name] = edit
+        layout.addLayout(bindings_layout)
+
+        actions = QHBoxLayout()
+        save_btn = QPushButton("Save Site Profile")
+        save_btn.setDefault(True)
+        save_btn.clicked.connect(self._save)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        actions.addStretch()
+        actions.addWidget(save_btn)
+        actions.addWidget(cancel_btn)
+        layout.addLayout(actions)
+
+    def _capture_chord(self, binding_name: str, target: QLineEdit) -> None:
+        capture_chord(binding_name.replace("_", " ").title(), target, self)
+
+    def _save(self) -> None:
+        self.profile_saved.emit(
+            self._setup.domain,
+            {name: edit.text().strip() or None for name, edit in self._binding_edits.items()},
+        )
+        self.accept()
+
+
 class SettingsWindow(QWidget):
     """Main settings window."""
 
     config_changed = pyqtSignal(Config)
     launch_browser_requested = pyqtSignal()
     generic_binding_test_requested = pyqtSignal(str)
+    quick_profile_setup_requested = pyqtSignal()
+    site_profile_binding_test_requested = pyqtSignal(str)
+    site_profile_save_requested = pyqtSignal(str, object)
     pin_current_tab_requested = pyqtSignal()
     unpin_current_tab_requested = pyqtSignal()
     pin_status_changed = pyqtSignal(object)
@@ -282,6 +370,21 @@ class SettingsWindow(QWidget):
             self._generic_binding_edits[binding_name] = edit
         layout.addWidget(generic_profile_group)
 
+        # Site Profile setup group
+        site_profile_group = QGroupBox("Site Profiles")
+        site_profile_layout = QFormLayout(site_profile_group)
+        site_profile_help = QLabel(
+            "Focus a browser tab, then open Quick Profile Setup to create or edit "
+            "the profile shared by that site's subdomains."
+        )
+        site_profile_help.setWordWrap(True)
+        site_profile_layout.addRow(site_profile_help)
+        quick_setup_btn = QPushButton("Quick Profile Setup")
+        quick_setup_btn.setToolTip("Configure the profile for the focused browser tab")
+        quick_setup_btn.clicked.connect(self.quick_profile_setup_requested.emit)
+        site_profile_layout.addRow("", quick_setup_btn)
+        layout.addWidget(site_profile_group)
+
         # Gesture timing group
         timing_group = QGroupBox("Gesture Timing")
         timing_layout = QFormLayout(timing_group)
@@ -412,9 +515,7 @@ class SettingsWindow(QWidget):
 
     def _capture_chord(self, binding_name: str, target: QLineEdit) -> None:
         label = binding_name.replace("_", " ").title()
-        dlg = ChordCaptureDialog(label, self)
-        dlg.chord_captured.connect(target.setText)
-        dlg.exec()
+        capture_chord(label, target, self)
 
     def _load_config_into_ui(self) -> None:
         self._exe_edit.setText(self._config.browser_exe)
@@ -450,6 +551,17 @@ class SettingsWindow(QWidget):
         """Explain why the focused browser tab could not be pinned."""
         QMessageBox.warning(self, "Could not pin current tab", message)
 
+    def show_site_profile_error(self, title: str, message: str) -> None:
+        """Explain why a Quick Profile Setup action could not complete."""
+        QMessageBox.warning(self, title, message)
+
+    def show_site_profile_setup(self, setup: SiteProfileSetup) -> None:
+        """Open the editable Site Profile form selected by the focused tab."""
+        dialog = SiteProfileDialog(setup, self)
+        dialog.binding_test_requested.connect(self.site_profile_binding_test_requested.emit)
+        dialog.profile_saved.connect(self.site_profile_save_requested.emit)
+        dialog.exec()
+
     def _update_warning_visibility(self) -> None:
         self._auto_launch_warning.setVisible(self._auto_launch_check.isChecked())
 
@@ -481,6 +593,10 @@ class SettingsWindow(QWidget):
             generic_bindings={
                 name: edit.text().strip() or None
                 for name, edit in self._generic_binding_edits.items()
+            },
+            site_profiles={
+                domain: dict(bindings)
+                for domain, bindings in self._config.site_profiles.items()
             },
         )
         errors = new_config.validate()

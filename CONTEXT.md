@@ -134,5 +134,5 @@ The editing interaction for a Gesture Binding: the user selects its input field 
 _Avoid_: Key dropdown, manual key code entry
 
 **Binding Test**:
-A user-initiated check that sends a saved Gesture Binding to the Profile Setup Target immediately, without requiring a Pinned Tab.
+A user-initiated check that sends a captured or saved Gesture Binding to the Profile Setup Target immediately, without requiring a Pinned Tab. It can be used before saving to verify a Site Profile binding.
 _Avoid_: Live gaming test, automatic test

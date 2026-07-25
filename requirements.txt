@@ -11,3 +11,4 @@ PyQt6>=6.6.0
 
 # Logging
 loguru>=0.7.2
+tldextract>=5.1.2

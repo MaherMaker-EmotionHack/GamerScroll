@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from gamerscroll.config import Config
+from gamerscroll.config import Config, main_domain_from_url
 
 
 def test_default_config_has_media_control_values() -> None:
@@ -101,3 +101,26 @@ def test_invalid_or_ordered_generic_bindings_are_unassigned(tmp_path: Path) -> N
     cfg = Config.load(path)
 
     assert cfg.generic_bindings["short_press"] is None
+
+
+def test_main_domain_groups_subdomains_and_keeps_local_hosts_distinct() -> None:
+    assert main_domain_from_url("https://music.youtube.com/watch?v=1") == "youtube.com"
+    assert main_domain_from_url("https://www.youtube.co.uk/shorts/1") == "youtube.co.uk"
+    assert main_domain_from_url("https://a.example.co.za/page") == "example.co.za"
+    assert main_domain_from_url("http://localhost:3000") == "localhost"
+
+
+def test_site_profiles_round_trip_as_optional_chords(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    cfg = Config(site_profiles={
+        "youtube.com": {
+            "short_press": "K",
+            "double_press": None,
+            "long_hold": "Shift+P",
+        }
+    })
+
+    cfg.save(path)
+
+    loaded = Config.load(path)
+    assert loaded.site_profiles == cfg.site_profiles

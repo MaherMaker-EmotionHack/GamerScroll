@@ -287,3 +287,121 @@ def test_binding_test_uses_active_tab_even_when_a_tab_is_pinned() -> None:
     controller.test_generic_binding("short_press")
 
     assert sender.actions == [SentAction("Space", None, None)]
+
+
+def test_site_profile_controls_the_pinned_tab_and_its_subdomains() -> None:
+    sender = FakeSender()
+    pinned_tab = TabTarget("pinned-id", "YouTube Music", "https://music.youtube.com/watch")
+    controller = MediaController(
+        config=Config(site_profiles={
+            "youtube.com": {
+                "short_press": "K",
+                "double_press": None,
+                "long_hold": "Shift+P",
+            }
+        }),
+        send_action=sender,
+        find_active_tab=FakeTargetFinder(pinned_tab),
+    )
+    controller.pin_current_tab()
+
+    controller.handle_gesture(Gesture.SHORT_PRESS)
+
+    assert sender.actions == [SentAction("K", None, "pinned-id")]
+
+
+def test_quick_profile_setup_uses_active_tab_and_creates_from_generic_profile() -> None:
+    sender = FakeSender()
+    active_tab = TabTarget("active-id", "YouTube", "https://www.youtube.com/shorts/1")
+    controller = MediaController(
+        config=Config(generic_bindings={
+            "short_press": "Space",
+            "double_press": None,
+            "long_hold": "ArrowUp",
+        }),
+        send_action=sender,
+        find_active_tab=FakeTargetFinder(active_tab),
+    )
+
+    setup = controller.begin_site_profile_setup()
+
+    assert setup.target == active_tab
+    assert setup.domain == "youtube.com"
+    assert setup.bindings == {
+        "short_press": "Space",
+        "double_press": None,
+        "long_hold": "ArrowUp",
+    }
+
+
+def test_quick_profile_setup_edits_the_existing_main_domain_profile() -> None:
+    active_tab = TabTarget("active-id", "YouTube", "https://music.youtube.com/watch")
+    controller = MediaController(
+        config=Config(site_profiles={
+            "youtube.com": {
+                "short_press": "K",
+                "double_press": None,
+                "long_hold": "Shift+P",
+            }
+        }),
+        find_active_tab=FakeTargetFinder(active_tab),
+    )
+
+    setup = controller.begin_site_profile_setup()
+
+    assert setup.domain == "youtube.com"
+    assert setup.bindings["short_press"] == "K"
+
+
+def test_profile_setup_tests_captured_chord_against_its_active_target() -> None:
+    sender = FakeSender()
+    active_tab = TabTarget("active-id", "YouTube", "https://www.youtube.com/shorts/1")
+    controller = MediaController(
+        config=Config(),
+        send_action=sender,
+        find_active_tab=FakeTargetFinder(active_tab),
+    )
+    controller.begin_site_profile_setup()
+
+    controller.test_site_profile_binding("K")
+
+    assert sender.actions == [SentAction("K", None, "active-id")]
+
+
+def test_saving_quick_setup_profile_changes_future_gesture_binding() -> None:
+    active_tab = TabTarget("active-id", "YouTube", "https://www.youtube.com/shorts/1")
+    config = Config()
+    controller = MediaController(
+        config=config,
+        find_active_tab=FakeTargetFinder(active_tab),
+    )
+    setup = controller.begin_site_profile_setup()
+
+    controller.save_site_profile(setup.domain, {
+        "short_press": "K",
+        "double_press": None,
+        "long_hold": "Shift+P",
+    })
+
+    assert config.site_profiles["youtube.com"]["short_press"] == "K"
+    assert controller.resolve_binding(Gesture.SHORT_PRESS, active_tab) == "K"
+
+
+def test_unmatched_site_uses_generic_profile_when_other_profiles_exist() -> None:
+    sender = FakeSender()
+    active_tab = TabTarget("active-id", "YouTube", "https://www.youtube.com/shorts/1")
+    controller = MediaController(
+        config=Config(site_profiles={
+            "vimeo.com": {
+                "short_press": "K",
+                "double_press": None,
+                "long_hold": "Shift+P",
+            }
+        }),
+        send_action=sender,
+        find_active_tab=FakeTargetFinder(active_tab),
+    )
+
+    controller.handle_gesture(Gesture.SHORT_PRESS)
+
+    assert sender.actions == [SentAction("Space", None, "active-id")]
