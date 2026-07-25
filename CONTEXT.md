@@ -68,7 +68,7 @@ Module that resolves a recognized Gesture to its Gesture Binding and sends its K
 _Avoid_: Scroller, command dispatcher
 
 **CDP Key Event**:
-A `Input.dispatchKeyEvent` keyDown/keyUp pair, including any modifier keys, sent to the selected target tab via Chrome DevTools Protocol. The transport for all Gesture Bindings.
+A `Input.dispatchKeyEvent` keyDown/keyUp pair, including any modifier keys, sent to the selected target tab's webpage renderer via Chrome DevTools Protocol. The transport for all Gesture Bindings; it does not invoke browser-chrome or operating-system shortcuts.
 _Avoid_: CDP command, key injection
 
 **Disabled**:
@@ -126,7 +126,7 @@ A Gesture Binding intentionally left without a Keyboard Chord in a Site Profile.
 _Avoid_: Generic fallback binding, missing configuration error
 
 **Keyboard Chord**:
-A single key or keys pressed simultaneously, such as `Space`, `Shift+N`, or `Ctrl+Right`. Gesture Bindings support Keyboard Chords only; they do not support ordered key sequences or text entry.
+A page-level single key or keys pressed simultaneously, such as `Space`, `Shift+N`, or `Ctrl+Right`. Gesture Bindings support Keyboard Chords only; they do not support ordered key sequences, text entry, or browser-chrome shortcuts such as `Ctrl+N` and `Ctrl+D`.
 _Avoid_: Macro, key sequence
 
 **Chord Capture**:

@@ -99,6 +99,14 @@ A single phantom key (default `F13`) is interpreted by a gesture detector:
 | Double press | Next | `ArrowDown` |
 | Long hold | Prev | `ArrowUp` |
 
+## What bindings can control
+
+GamerScroll is a remote control for a compatible media webpage, not for the browser application itself. It sends keyboard events to the selected webpage renderer through CDP.
+
+- A binding works only when the target site exposes that control as an in-page keyboard shortcut, such as `Space`, arrow keys, or Prime Video's `F`.
+- Browser-chrome shortcuts such as `Ctrl+N` (new window), `Ctrl+D` (bookmark), tab switching, and the address bar are outside this transport's scope.
+- For reliable gaming use, pin the intended media tab before focusing the game. Binding Test intentionally uses the focused setup tab without a pin.
+
 ## Browser support
 
 Chromium-based browsers only:
@@ -170,3 +178,4 @@ See `FUTURE.md` for planned or shelved ideas, including the browser-extension re
 - The browser must be launched with `--remote-debugging-port=<port>`. The app can do this automatically, but it will close existing browser windows first.
 - Media commands target the active/focused browser tab. If you switch tabs, you may need to click the desired tab first.
 - Optimized for YouTube Shorts. Other reel sites (Instagram, Facebook) may not respond to the same keys.
+- Bindings are page-level only. Browser UI shortcuts such as `Ctrl+N` and `Ctrl+D` cannot be triggered through CDP page input.

@@ -135,3 +135,7 @@ On startup the app checks whether the CDP endpoint is reachable. If not, it:
 ## Future ideas
 
 See `FUTURE.md` for shelved ideas, including the browser-extension relay approach.
+
+## Product boundary
+
+GamerScroll is deliberately a remote control for a compatible media page, not a remote control for the whole browser or Windows. A binding only works when the target site handles that key in its webpage. Browser shortcuts such as `Ctrl+N` and `Ctrl+D` are handled outside the renderer and cannot be invoked by the CDP page-input transport. Supporting them would require a separate browser-level automation mechanism that could conflict with the game's focus.
