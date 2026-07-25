@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from gamerscroll.browser import BrowserInfo, detect_browsers, list_profiles
-from gamerscroll.config import Config
+from gamerscroll.config import Config, GESTURE_BINDING_NAMES, normalize_keyboard_chord
 from gamerscroll.controller import TabTarget
 from gamerscroll.logger import _log_dir
 
@@ -81,14 +81,70 @@ class KeyCaptureDialog(QDialog):
         return mapping.get(name, name)
 
 
+class ChordCaptureDialog(QDialog):
+    """Capture a single key or simultaneous modifier chord, never a sequence."""
+
+    chord_captured = pyqtSignal(str)
+
+    def __init__(self, label: str, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Capture shortcut")
+        self.setFixedSize(400, 150)
+        self.setModal(True)
+        layout = QVBoxLayout(self)
+        message = (
+            f"Press one key or a shortcut for: <b>{label}</b><br>"
+            "Use keys pressed together, such as Ctrl+L. Press Esc to cancel."
+        )
+        self._label = QLabel(message)
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._label.setWordWrap(True)
+        layout.addWidget(self._label)
+
+    def keyPressEvent(self, event: Optional[QKeyEvent]) -> None:  # noqa: N802
+        if event is None:
+            return
+        key = event.key()
+        if key == Qt.Key.Key_Escape:
+            self.reject()
+            return
+        if key in {
+            Qt.Key.Key_Control,
+            Qt.Key.Key_Alt,
+            Qt.Key.Key_Shift,
+            Qt.Key.Key_Meta,
+        }:
+            self._label.setText("Hold your modifier, then press its key.")
+            return
+
+        key_name = QKeySequence(key).toString()
+        if not key_name:
+            self._label.setText("That key is not supported. Try another key.")
+            return
+        modifiers: list[str] = []
+        held = event.modifiers()
+        if held & Qt.KeyboardModifier.ControlModifier:
+            modifiers.append("Ctrl")
+        if held & Qt.KeyboardModifier.AltModifier:
+            modifiers.append("Alt")
+        if held & Qt.KeyboardModifier.ShiftModifier:
+            modifiers.append("Shift")
+        if held & Qt.KeyboardModifier.MetaModifier:
+            modifiers.append("Meta")
+        chord = normalize_keyboard_chord("+".join([*modifiers, key_name]))
+        if chord is None:
+            self._label.setText("Use one key or a modifier chord, not text or a sequence.")
+            return
+        self.chord_captured.emit(chord)
+        self.accept()
+
+
 class SettingsWindow(QWidget):
     """Main settings window."""
 
     config_changed = pyqtSignal(Config)
     launch_browser_requested = pyqtSignal()
-    test_pause_play_requested = pyqtSignal()
-    test_next_requested = pyqtSignal()
-    test_prev_requested = pyqtSignal()
+    generic_binding_test_requested = pyqtSignal(str)
     pin_current_tab_requested = pyqtSignal()
     unpin_current_tab_requested = pyqtSignal()
     pin_status_changed = pyqtSignal(object)
@@ -99,6 +155,7 @@ class SettingsWindow(QWidget):
         self.setMinimumWidth(500)
         self._config = config
         self._browsers: List[BrowserInfo] = []
+        self._generic_binding_edits: dict[str, QLineEdit] = {}
         self.pin_status_changed.connect(self.set_pin_status)
         self._build_ui()
         self._refresh_browser_list()
@@ -188,6 +245,43 @@ class SettingsWindow(QWidget):
 
         layout.addWidget(media_key_group)
 
+        # Generic Profile group
+        generic_profile_group = QGroupBox("Generic Profile")
+        generic_profile_layout = QFormLayout(generic_profile_group)
+        generic_help = QLabel(
+            "Used for every website without a Site Profile. Each gesture can use one key, "
+            "a simultaneous shortcut, or be left unassigned."
+        )
+        generic_help.setWordWrap(True)
+        generic_profile_layout.addRow(generic_help)
+        labels = {
+            "short_press": "Short press:",
+            "double_press": "Double press:",
+            "long_hold": "Long hold:",
+        }
+        for binding_name in GESTURE_BINDING_NAMES:
+            edit = QLineEdit()
+            edit.setReadOnly(True)
+            capture_btn = QPushButton("Capture")
+            capture_btn.clicked.connect(
+                lambda _checked=False, name=binding_name, field=edit: self._capture_chord(name, field)
+            )
+            clear_btn = QPushButton("Clear")
+            clear_btn.clicked.connect(edit.clear)
+            test_btn = QPushButton("Test")
+            test_btn.setToolTip("Sends the saved binding to the active setup tab")
+            test_btn.clicked.connect(
+                lambda _checked=False, name=binding_name: self.generic_binding_test_requested.emit(name)
+            )
+            row = QHBoxLayout()
+            row.addWidget(edit)
+            row.addWidget(capture_btn)
+            row.addWidget(clear_btn)
+            row.addWidget(test_btn)
+            generic_profile_layout.addRow(labels[binding_name], row)
+            self._generic_binding_edits[binding_name] = edit
+        layout.addWidget(generic_profile_group)
+
         # Gesture timing group
         timing_group = QGroupBox("Gesture Timing")
         timing_layout = QFormLayout(timing_group)
@@ -212,18 +306,6 @@ class SettingsWindow(QWidget):
         self._debounce_spin.setValue(150)
         self._debounce_spin.setSuffix(" ms")
         timing_layout.addRow("Debounce:", self._debounce_spin)
-
-        test_layout = QHBoxLayout()
-        test_pause_btn = QPushButton("Test Pause/Play")
-        test_pause_btn.clicked.connect(self.test_pause_play_requested.emit)
-        test_next_btn = QPushButton("Test Next")
-        test_next_btn.clicked.connect(self.test_next_requested.emit)
-        test_prev_btn = QPushButton("Test Prev")
-        test_prev_btn.clicked.connect(self.test_prev_requested.emit)
-        test_layout.addWidget(test_pause_btn)
-        test_layout.addWidget(test_next_btn)
-        test_layout.addWidget(test_prev_btn)
-        timing_layout.addRow("", test_layout)
 
         layout.addWidget(timing_group)
 
@@ -328,10 +410,18 @@ class SettingsWindow(QWidget):
         dlg.key_captured.connect(target.setText)
         dlg.exec()
 
+    def _capture_chord(self, binding_name: str, target: QLineEdit) -> None:
+        label = binding_name.replace("_", " ").title()
+        dlg = ChordCaptureDialog(label, self)
+        dlg.chord_captured.connect(target.setText)
+        dlg.exec()
+
     def _load_config_into_ui(self) -> None:
         self._exe_edit.setText(self._config.browser_exe)
         self._port_spin.setValue(self._config.cdp_port)
         self._media_key_edit.setText(self._config.media_key)
+        for binding_name, edit in self._generic_binding_edits.items():
+            edit.setText(self._config.generic_bindings.get(binding_name) or "")
         self._hold_threshold_spin.setValue(self._config.hold_threshold_ms)
         self._double_click_window_spin.setValue(self._config.double_click_window_ms)
         self._debounce_spin.setValue(self._config.debounce_ms)
@@ -388,6 +478,10 @@ class SettingsWindow(QWidget):
             auto_start_windows=self._auto_start_check.isChecked(),
             disabled=self._config.disabled,
             log_level=self._log_level_combo.currentText(),
+            generic_bindings={
+                name: edit.text().strip() or None
+                for name, edit in self._generic_binding_edits.items()
+            },
         )
         errors = new_config.validate()
         if errors:

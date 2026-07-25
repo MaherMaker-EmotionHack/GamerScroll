@@ -4,35 +4,20 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from enum import Enum, auto
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import urlparse
 
 from loguru import logger
 
-from gamerscroll.config import Config
+from gamerscroll.config import Config, GESTURE_BINDING_NAMES, normalize_keyboard_chord
 from gamerscroll.gestures import Gesture
 
 
-class MediaAction(Enum):
-    """CDP-key actions supported by the controller."""
-
-    PAUSE_PLAY = auto()
-    NEXT = auto()
-    PREV = auto()
-
-
-_GESTURE_TO_ACTION: dict[Gesture, MediaAction] = {
-    Gesture.SHORT_PRESS: MediaAction.PAUSE_PLAY,
-    Gesture.DOUBLE_PRESS: MediaAction.NEXT,
-    Gesture.LONG_HOLD: MediaAction.PREV,
-}
-
-_ACTION_TO_KEY: dict[MediaAction, str] = {
-    MediaAction.PAUSE_PLAY: "Space",
-    MediaAction.NEXT: "ArrowDown",
-    MediaAction.PREV: "ArrowUp",
+_GESTURE_TO_BINDING_NAME: dict[Gesture, str] = {
+    Gesture.SHORT_PRESS: "short_press",
+    Gesture.DOUBLE_PRESS: "double_press",
+    Gesture.LONG_HOLD: "long_hold",
 }
 
 
@@ -62,7 +47,7 @@ class TargetUnavailableError(Exception):
     """Raised when a session-only pinned CDP target has disappeared."""
 
 
-SendActionFn = Callable[[str, int, MediaAction, Optional[str], Optional[str]], None]
+SendActionFn = Callable[[str, int, str, Optional[str], Optional[str]], None]
 FindActiveTabFn = Callable[[str, int, Optional[str]], TabTarget]
 VerifyTargetFn = Callable[[str, int, str], bool]
 PinChangedFn = Callable[[Optional[TabTarget]], None]
@@ -70,7 +55,7 @@ RecoveryFn = Callable[[], bool]
 
 
 class MediaController:
-    """Maps recognized gestures to CDP media actions.
+    """Resolves gestures to Generic Profile chords and sends them through CDP.
 
     The controller owns the current configuration and status reporting; the
     actual CDP transport is injected via ``send_action`` so tests can substitute
@@ -119,7 +104,7 @@ class MediaController:
         _ = old
 
     def handle_gesture(self, gesture: Gesture) -> None:
-        """Dispatch a recognized gesture to the corresponding media action."""
+        """Dispatch a recognized gesture to its Generic Profile binding."""
         with self._lock:
             cfg = self._config
             pinned_tab = self._pinned_tab
@@ -132,39 +117,75 @@ class MediaController:
                 self._emit(False, "CDP unreachable — recovering.")
                 return
 
-        action = _GESTURE_TO_ACTION.get(gesture)
-        if action is None:
+        if gesture not in _GESTURE_TO_BINDING_NAME:
             logger.warning("Unknown gesture: {}", gesture)
             return
+        chord = self.resolve_generic_binding(gesture)
+        if chord is None:
+            logger.info("Gesture {} has no assigned Generic Profile binding", gesture.name)
+            self._emit(True, f"{gesture.name.replace('_', ' ').title()} is unassigned.")
+            return
 
-        logger.debug("Executing media action {} for gesture {}", action.name, gesture.name)
+        logger.debug("Sending Generic Profile chord {} for gesture {}", chord, gesture.name)
         try:
             exe_name = Path(cfg.browser_exe).name if cfg.browser_exe else None
             self._send_action(
                 cfg.cdp_host,
                 cfg.cdp_port,
-                action,
+                chord,
                 exe_name,
                 pinned_tab.target_id if pinned_tab else None,
             )
             with self._lock:
                 self._consecutive_failures = 0
-            self._emit(True, action.name.replace("_", " ").title())
+            self._emit(True, f"Sent {chord}")
         except TargetUnavailableError as exc:
             if pinned_tab is None:
-                self._record_action_failure(action, exc)
+                self._record_action_failure(chord, exc)
                 return
             logger.info("Pinned tab '{}' disappeared; falling back to active tab", pinned_tab.title)
             self.unpin_current_tab()
             try:
-                self._send_action(cfg.cdp_host, cfg.cdp_port, action, exe_name, None)
+                self._send_action(cfg.cdp_host, cfg.cdp_port, chord, exe_name, None)
                 with self._lock:
                     self._consecutive_failures = 0
-                self._emit(True, action.name.replace("_", " ").title())
+                self._emit(True, f"Sent {chord}")
             except Exception as exc:
-                self._record_action_failure(action, exc)
+                self._record_action_failure(chord, exc)
         except Exception as exc:
-            self._record_action_failure(action, exc)
+            self._record_action_failure(chord, exc)
+
+    def resolve_generic_binding(self, gesture: Gesture) -> str | None:
+        """Return the Generic Profile binding used when no Site Profile matches."""
+        binding_name = _GESTURE_TO_BINDING_NAME.get(gesture)
+        if binding_name is None:
+            logger.warning("Unknown gesture: {}", gesture)
+            return None
+        with self._lock:
+            chord = self._config.generic_bindings.get(binding_name)
+        return normalize_keyboard_chord(chord) if chord is not None else None
+
+    def test_generic_binding(self, binding_name: str) -> None:
+        """Send a saved Generic Profile chord to the active setup tab.
+
+        Binding tests intentionally ignore the session pin so configuration can
+        be tested against the tab the user focused before opening Settings.
+        """
+        if binding_name not in GESTURE_BINDING_NAMES:
+            logger.warning("Unknown Generic Profile binding requested for test: {}", binding_name)
+            return
+        with self._lock:
+            cfg = self._config
+        chord = normalize_keyboard_chord(cfg.generic_bindings.get(binding_name))
+        if chord is None:
+            self._emit(False, "This binding is unassigned.")
+            return
+        try:
+            exe_name = Path(cfg.browser_exe).name if cfg.browser_exe else None
+            self._send_action(cfg.cdp_host, cfg.cdp_port, chord, exe_name, None)
+            self._emit(True, f"Test sent {chord}")
+        except Exception as exc:
+            self._record_action_failure(chord, exc)
 
     @property
     def pinned_tab(self) -> Optional[TabTarget]:
@@ -213,8 +234,8 @@ class MediaController:
         if self._on_pin_changed:
             self._on_pin_changed(pinned_tab)
 
-    def _record_action_failure(self, action: MediaAction, exc: Exception) -> None:
-        logger.error("Media action {} failed: {}", action.name, exc)
+    def _record_action_failure(self, chord: str, exc: Exception) -> None:
+        logger.error("Keyboard chord {} failed: {}", chord, exc)
         with self._lock:
             self._consecutive_failures += 1
             if self._consecutive_failures >= self._max_consecutive_failures:
@@ -278,21 +299,18 @@ class MediaController:
     def _default_send_action(
         host: str,
         port: int,
-        action: MediaAction,
+        chord: str,
         browser_exe_name: Optional[str] = None,
         target_id: Optional[str] = None,
     ) -> None:
         from gamerscroll.cdp import TargetUnavailableError as CDPTargetUnavailableError
-        from gamerscroll.cdp import send_key_event_sync
+        from gamerscroll.cdp import send_key_chord_sync
 
-        key = _ACTION_TO_KEY.get(action)
-        if key is None:
-            raise ValueError(f"No CDP key mapping for action {action}")
         try:
-            send_key_event_sync(
+            send_key_chord_sync(
                 host,
                 port,
-                key,
+                chord,
                 browser_exe_name=browser_exe_name,
                 target_id=target_id,
             )

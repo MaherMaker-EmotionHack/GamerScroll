@@ -29,7 +29,7 @@ Media control for gamers. Pause/play, skip, and go back in YouTube Shorts (or an
    - In settings, click **Launch Browser Now**.
    - This closes any existing browser windows and restarts it with `--remote-debugging-port=<port>`.
 
-5. **Configure your media key and gestures**
+5. **Configure your media key and Generic Profile**
 
    - Default media key: `F13`.
    - Default gestures:
@@ -37,6 +37,9 @@ Media control for gamers. Pause/play, skip, and go back in YouTube Shorts (or an
      - **Double press** → Next
      - **Long hold** → Prev
    - Adjust **Hold threshold**, **Double-click window**, and **Debounce** to tune the feel.
+   - The Generic Profile applies when a site has no Site Profile. Capture one key or
+     a simultaneous shortcut such as `Ctrl+L`, clear a binding to disable its gesture,
+     then save and use **Test** to send it to the focused browser tab without pinning.
 
 6. **Use it**
 

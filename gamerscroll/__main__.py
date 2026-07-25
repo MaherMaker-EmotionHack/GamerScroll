@@ -127,14 +127,8 @@ class GamerScrollApp:
             self.settings_window = SettingsWindow(self.config)
             self.settings_window.config_changed.connect(self._apply_config)
             self.settings_window.launch_browser_requested.connect(self._launch_browser)
-            self.settings_window.test_pause_play_requested.connect(
-                lambda: self.controller.handle_gesture(Gesture.SHORT_PRESS)
-            )
-            self.settings_window.test_next_requested.connect(
-                lambda: self.controller.handle_gesture(Gesture.DOUBLE_PRESS)
-            )
-            self.settings_window.test_prev_requested.connect(
-                lambda: self.controller.handle_gesture(Gesture.LONG_HOLD)
+            self.settings_window.generic_binding_test_requested.connect(
+                self.controller.test_generic_binding
             )
             self.settings_window.pin_current_tab_requested.connect(self._pin_current_tab)
             self.settings_window.unpin_current_tab_requested.connect(self._unpin_current_tab)

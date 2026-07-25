@@ -4,11 +4,88 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, List
 
 from loguru import logger
+
+
+GESTURE_BINDING_NAMES = ("short_press", "double_press", "long_hold")
+_NAMED_KEYBOARD_KEYS = {
+    "Space", "Enter", "Tab", "Escape", "Backspace", "Delete", "Insert",
+    "Home", "End", "PageUp", "PageDown", "ArrowDown", "ArrowUp",
+    "ArrowLeft", "ArrowRight",
+}
+DEFAULT_GENERIC_BINDINGS: dict[str, str | None] = {
+    "short_press": "Space",
+    "double_press": "ArrowDown",
+    "long_hold": "ArrowUp",
+}
+
+
+def normalize_keyboard_chord(value: object) -> str | None:
+    """Return a canonical simultaneous-key chord, or ``None`` if invalid.
+
+    Bindings intentionally use a compact string representation (``Ctrl+L``),
+    which is stable in JSON and accepted directly by the CDP transport.  A
+    chord has exactly one non-modifier key; comma-separated or space-separated
+    input would be an ordered sequence or text entry and is rejected.
+    """
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or "," in value or ";" in value or " " in value:
+        return None
+
+    aliases = {
+        "ctrl": "Ctrl",
+        "control": "Ctrl",
+        "alt": "Alt",
+        "shift": "Shift",
+        "meta": "Meta",
+        "cmd": "Meta",
+        "command": "Meta",
+        "esc": "Escape",
+        "return": "Enter",
+        "up": "ArrowUp",
+        "down": "ArrowDown",
+        "left": "ArrowLeft",
+        "right": "ArrowRight",
+    }
+    parts = value.split("+")
+    if not parts or any(not part for part in parts):
+        return None
+
+    normalized = [aliases.get(part.lower(), part.upper() if len(part) == 1 else part) for part in parts]
+    modifiers = {"Ctrl", "Alt", "Shift", "Meta"}
+    keys = [part for part in normalized if part not in modifiers]
+    if len(keys) != 1 or normalized[-1] in modifiers:
+        return None
+    modifier_parts = normalized[:-1]
+    if any(part not in modifiers for part in modifier_parts) or len(set(modifier_parts)) != len(modifier_parts):
+        return None
+    key = keys[0]
+    if not (
+        key in _NAMED_KEYBOARD_KEYS
+        or re.fullmatch(r"[A-Z0-9]|F(?:[1-9]|1[0-9]|2[0-4])", key)
+    ):
+        return None
+    return "+".join([*modifier_parts, key])
+
+
+def sanitize_generic_bindings(value: object) -> dict[str, str | None]:
+    """Merge saved generic bindings with defaults without accepting sequences."""
+    raw = value if isinstance(value, dict) else {}
+    bindings: dict[str, str | None] = {}
+    for name in GESTURE_BINDING_NAMES:
+        if name not in raw:
+            bindings[name] = DEFAULT_GENERIC_BINDINGS[name]
+            continue
+        saved = raw[name]
+        bindings[name] = None if saved is None else normalize_keyboard_chord(saved)
+    return bindings
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -26,6 +103,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "auto_start_windows": False,
     "disabled": False,
     "log_level": "INFO",
+    "generic_bindings": DEFAULT_GENERIC_BINDINGS,
 }
 
 
@@ -45,6 +123,9 @@ class Config:
     auto_start_windows: bool = False
     disabled: bool = False
     log_level: str = "INFO"
+    generic_bindings: dict[str, str | None] = field(
+        default_factory=lambda: dict(DEFAULT_GENERIC_BINDINGS)
+    )
 
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":
@@ -100,6 +181,7 @@ class Config:
             current = getattr(self, field_name)
             if not isinstance(current, bool):
                 setattr(self, field_name, bool(current))
+        self.generic_bindings = sanitize_generic_bindings(self.generic_bindings)
 
     def save(self, path: Path | None = None) -> None:
         if path is None:
@@ -141,4 +223,9 @@ class Config:
             errors.append(f"Debounce must be non-negative, got {self.debounce_ms}")
         if self.log_level not in {"DEBUG", "INFO", "WARNING", "ERROR"}:
             errors.append(f"Invalid log level: {self.log_level}")
+        for name, binding in self.generic_bindings.items():
+            if name not in GESTURE_BINDING_NAMES:
+                errors.append(f"Unknown generic gesture binding: {name}")
+            elif binding is not None and normalize_keyboard_chord(binding) is None:
+                errors.append(f"Invalid keyboard chord for {name}: {binding}")
         return errors

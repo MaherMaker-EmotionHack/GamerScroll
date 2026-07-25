@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gamerscroll.cdp import CDPError, TargetUnavailableError, find_tab_ws, send_key_event
+from gamerscroll.cdp import CDPError, TargetUnavailableError, find_tab_ws, send_key_chord, send_key_event
 
 
 @pytest.mark.asyncio
@@ -55,6 +55,27 @@ async def test_send_key_event_uses_arrow_up_for_prev() -> None:
     sent = [json.loads(call.args[0]) for call in mock_ws.send.call_args_list]
     assert sent[0]["params"]["windowsVirtualKeyCode"] == 38
     assert sent[0]["params"]["nativeVirtualKeyCode"] == 38
+
+
+@pytest.mark.asyncio
+async def test_send_key_chord_dispatches_modifiers_around_the_main_key() -> None:
+    mock_ws = AsyncMock()
+
+    with patch("gamerscroll.cdp.find_active_tab_ws", return_value="ws://tab"):
+        with patch("websockets.connect", return_value=async_context_manager(mock_ws)):
+            await send_key_chord("127.0.0.1", 9222, "Ctrl+Shift+N")
+
+    sent = [json.loads(call.args[0])["params"] for call in mock_ws.send.call_args_list]
+
+    assert [(event["type"], event["key"]) for event in sent] == [
+        ("keyDown", "Control"),
+        ("keyDown", "Shift"),
+        ("keyDown", "N"),
+        ("keyUp", "N"),
+        ("keyUp", "Shift"),
+        ("keyUp", "Control"),
+    ]
+    assert sent[2]["modifiers"] == 10
 
 
 @pytest.mark.asyncio

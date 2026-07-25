@@ -9,7 +9,6 @@ import pytest
 
 from gamerscroll.config import Config
 from gamerscroll.controller import (
-    MediaAction,
     MediaController,
     MediaStatus,
     TabTarget,
@@ -20,7 +19,7 @@ from gamerscroll.gestures import Gesture
 
 @dataclass
 class SentAction:
-    action: MediaAction
+    chord: str
     browser_exe_name: Optional[str]
     target_id: Optional[str] = None
 
@@ -37,7 +36,7 @@ class FakeSender:
         self,
         host: str,
         port: int,
-        action: MediaAction,
+        chord: str,
         browser_exe_name: Optional[str] = None,
         target_id: Optional[str] = None,
     ) -> None:
@@ -45,7 +44,7 @@ class FakeSender:
             raise RuntimeError(self.error_message)
         if target_id in self.unavailable_target_ids:
             raise TargetUnavailableError("Pinned browser tab is no longer available.")
-        self.actions.append(SentAction(action, browser_exe_name, target_id))
+        self.actions.append(SentAction(chord, browser_exe_name, target_id))
 
 
 class FakeTargetFinder:
@@ -95,7 +94,7 @@ def test_short_press_sends_pause_play() -> None:
 
     controller.handle_gesture(Gesture.SHORT_PRESS)
 
-    assert sender.actions == [SentAction(MediaAction.PAUSE_PLAY, "comet.exe")]
+    assert sender.actions == [SentAction("Space", "comet.exe")]
 
 
 def test_double_press_sends_next() -> None:
@@ -104,7 +103,7 @@ def test_double_press_sends_next() -> None:
 
     controller.handle_gesture(Gesture.DOUBLE_PRESS)
 
-    assert sender.actions == [SentAction(MediaAction.NEXT, "comet.exe")]
+    assert sender.actions == [SentAction("ArrowDown", "comet.exe")]
 
 
 def test_long_hold_sends_prev() -> None:
@@ -113,7 +112,7 @@ def test_long_hold_sends_prev() -> None:
 
     controller.handle_gesture(Gesture.LONG_HOLD)
 
-    assert sender.actions == [SentAction(MediaAction.PREV, "comet.exe")]
+    assert sender.actions == [SentAction("ArrowUp", "comet.exe")]
 
 
 def test_disabled_controller_ignores_gesture() -> None:
@@ -182,7 +181,7 @@ def test_pin_current_tab_targets_that_tab_for_later_gestures() -> None:
 
     controller.handle_gesture(Gesture.SHORT_PRESS)
 
-    assert sender.actions == [SentAction(MediaAction.PAUSE_PLAY, "brave.exe", "pinned-id")]
+    assert sender.actions == [SentAction("Space", "brave.exe", "pinned-id")]
 
 
 def test_unpin_current_tab_returns_gestures_to_the_active_tab() -> None:
@@ -199,7 +198,7 @@ def test_unpin_current_tab_returns_gestures_to_the_active_tab() -> None:
     controller.handle_gesture(Gesture.SHORT_PRESS)
 
     assert controller.pinned_tab is None
-    assert sender.actions == [SentAction(MediaAction.PAUSE_PLAY, "brave.exe", None)]
+    assert sender.actions == [SentAction("Space", "brave.exe", None)]
 
 
 def test_missing_pinned_tab_falls_back_to_the_active_tab() -> None:
@@ -216,7 +215,7 @@ def test_missing_pinned_tab_falls_back_to_the_active_tab() -> None:
     controller.handle_gesture(Gesture.DOUBLE_PRESS)
 
     assert controller.pinned_tab is None
-    assert sender.actions == [SentAction(MediaAction.NEXT, "brave.exe", None)]
+    assert sender.actions == [SentAction("ArrowDown", "brave.exe", None)]
 
 
 def test_a_new_controller_session_has_no_pinned_tab() -> None:
@@ -244,3 +243,47 @@ def test_refreshing_after_a_browser_restart_removes_the_pin() -> None:
 
     assert controller.refresh_pinned_tab() is None
     assert controller.pinned_tab is None
+
+
+def test_unassigned_generic_binding_sends_no_command() -> None:
+    sender = FakeSender()
+    controller = MediaController(
+        config=Config(generic_bindings={
+            "short_press": None,
+            "double_press": "ArrowDown",
+            "long_hold": "ArrowUp",
+        }),
+        send_action=sender,
+    )
+
+    controller.handle_gesture(Gesture.SHORT_PRESS)
+
+    assert sender.actions == []
+
+
+def test_generic_profile_resolves_custom_bindings_for_unmatched_sites() -> None:
+    controller = MediaController(
+        config=Config(generic_bindings={
+            "short_press": "Ctrl+L",
+            "double_press": None,
+            "long_hold": "Shift+N",
+        }),
+    )
+
+    assert controller.resolve_generic_binding(Gesture.SHORT_PRESS) == "Ctrl+L"
+    assert controller.resolve_generic_binding(Gesture.DOUBLE_PRESS) is None
+
+
+def test_binding_test_uses_active_tab_even_when_a_tab_is_pinned() -> None:
+    sender = FakeSender()
+    pinned_tab = TabTarget("pinned-id", "YouTube", "https://www.youtube.com/watch?v=1")
+    controller = MediaController(
+        config=Config(),
+        send_action=sender,
+        find_active_tab=FakeTargetFinder(pinned_tab),
+    )
+    controller.pin_current_tab()
+
+    controller.test_generic_binding("short_press")
+
+    assert sender.actions == [SentAction("Space", None, None)]

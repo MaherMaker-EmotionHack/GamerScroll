@@ -72,3 +72,32 @@ def test_save_and_round_trip(tmp_path: Path) -> None:
     assert loaded.media_key == "f14"
     assert loaded.hold_threshold_ms == 700
     assert loaded.disabled is True
+
+
+def test_generic_bindings_round_trip_as_optional_chords(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    cfg = Config(
+        generic_bindings={
+            "short_press": "Ctrl+L",
+            "double_press": None,
+            "long_hold": "Shift+N",
+        }
+    )
+
+    cfg.save(path)
+
+    assert json.loads(path.read_text())["generic_bindings"] == {
+        "short_press": "Ctrl+L",
+        "double_press": None,
+        "long_hold": "Shift+N",
+    }
+    assert Config.load(path).generic_bindings == cfg.generic_bindings
+
+
+def test_invalid_or_ordered_generic_bindings_are_unassigned(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"generic_bindings": {"short_press": "Ctrl+L, N"}}))
+
+    cfg = Config.load(path)
+
+    assert cfg.generic_bindings["short_press"] is None

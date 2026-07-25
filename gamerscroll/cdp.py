@@ -13,6 +13,8 @@ import requests
 import websockets
 from loguru import logger
 
+from gamerscroll.config import normalize_keyboard_chord
+
 
 class CDPError(Exception):
     """Raised when a CDP operation fails."""
@@ -178,11 +180,55 @@ def find_tab_ws(host: str, port: int, target_id: str, timeout: float = 2.0) -> s
     raise TargetUnavailableError("Pinned browser tab is no longer available.")
 
 
-_KEY_CODES: dict[str, int] = {
-    "Space": 32,
-    "ArrowDown": 40,
-    "ArrowUp": 38,
+_SPECIAL_KEYS: dict[str, tuple[str, int]] = {
+    "Space": ("Space", 32),
+    "Enter": ("Enter", 13),
+    "Tab": ("Tab", 9),
+    "Escape": ("Escape", 27),
+    "Backspace": ("Backspace", 8),
+    "Delete": ("Delete", 46),
+    "Insert": ("Insert", 45),
+    "Home": ("Home", 36),
+    "End": ("End", 35),
+    "PageUp": ("PageUp", 33),
+    "PageDown": ("PageDown", 34),
+    "ArrowDown": ("ArrowDown", 40),
+    "ArrowUp": ("ArrowUp", 38),
+    "ArrowLeft": ("ArrowLeft", 37),
+    "ArrowRight": ("ArrowRight", 39),
 }
+_MODIFIERS: dict[str, tuple[str, str, int, int]] = {
+    "Ctrl": ("Control", "ControlLeft", 17, 2),
+    "Alt": ("Alt", "AltLeft", 18, 1),
+    "Shift": ("Shift", "ShiftLeft", 16, 8),
+    "Meta": ("Meta", "MetaLeft", 91, 4),
+}
+
+
+def _key_event_data(key: str) -> tuple[str, str, int]:
+    """Map a normalized binding key to CDP ``key``, ``code``, and VK values."""
+    if key in _SPECIAL_KEYS:
+        code, virtual_key = _SPECIAL_KEYS[key]
+        return key, code, virtual_key
+    if len(key) == 1 and "A" <= key <= "Z":
+        return key, f"Key{key}", ord(key)
+    if len(key) == 1 and "0" <= key <= "9":
+        return key, f"Digit{key}", ord(key)
+    if re.fullmatch(r"F(?:[1-9]|1[0-9]|2[0-4])", key):
+        number = int(key[1:])
+        return key, key, 111 + number
+    raise CDPError(f"Unsupported CDP key: {key}")
+
+
+def _parse_chord(chord: str) -> tuple[list[str], str]:
+    """Validate a serialized simultaneous chord and split modifiers from its key."""
+    normalized = normalize_keyboard_chord(chord)
+    if normalized is None:
+        raise CDPError(f"Invalid keyboard chord: {chord}")
+    parts = normalized.split("+")
+    modifiers = parts[:-1]
+    key = parts[-1]
+    return modifiers, key
 
 
 async def send_key_event(
@@ -198,6 +244,24 @@ async def send_key_event(
         key: The CDP key name, e.g. ``"Space"``, ``"ArrowDown"``, ``"ArrowUp"``.
         browser_exe_name: Optional executable name used to resolve the active tab.
     """
+    await send_key_chord(
+        host,
+        port,
+        key,
+        browser_exe_name=browser_exe_name,
+        target_id=target_id,
+    )
+
+
+async def send_key_chord(
+    host: str,
+    port: int,
+    chord: str,
+    browser_exe_name: Optional[str] = None,
+    target_id: Optional[str] = None,
+) -> None:
+    """Send one key or simultaneous keyboard chord to a CDP page target."""
+    modifiers, key = _parse_chord(chord)
     ws_url = (
         find_tab_ws(host, port, target_id)
         if target_id is not None
@@ -206,25 +270,37 @@ async def send_key_event(
     if not ws_url:
         raise CDPError("No target tab available.")
 
-    vk_code = _KEY_CODES.get(key)
-    if vk_code is None:
-        raise CDPError(f"Unsupported CDP key: {key}")
-
-    # Include `text` for Space so Chromium generates a keypress/input event.
-    text = " " if key == "Space" else None
-
-    logger.debug("Sending CDP key event: {}", key)
+    main_key, main_code, main_vk = _key_event_data(key)
+    modifier_mask = sum(_MODIFIERS[modifier][3] for modifier in modifiers)
+    text = " " if main_key == "Space" and not modifiers else None
+    logger.debug("Sending CDP keyboard chord: {}", chord)
     try:
         async with websockets.connect(ws_url) as ws:
-            for idx, event_type in enumerate(("keyDown", "keyUp"), start=1):
+            events: list[tuple[str, str, str, int, int]] = []
+            active_modifiers = 0
+            for modifier in modifiers:
+                modifier_key, modifier_code, modifier_vk, modifier_bit = _MODIFIERS[modifier]
+                active_modifiers |= modifier_bit
+                events.append(("keyDown", modifier_key, modifier_code, modifier_vk, active_modifiers))
+            events.extend([
+                ("keyDown", main_key, main_code, main_vk, modifier_mask),
+                ("keyUp", main_key, main_code, main_vk, modifier_mask),
+            ])
+            for modifier in reversed(modifiers):
+                modifier_key, modifier_code, modifier_vk, modifier_bit = _MODIFIERS[modifier]
+                active_modifiers &= ~modifier_bit
+                events.append(("keyUp", modifier_key, modifier_code, modifier_vk, active_modifiers))
+
+            for idx, (event_type, event_key, code, vk_code, event_modifiers) in enumerate(events, start=1):
                 params: dict[str, Any] = {
                     "type": event_type,
-                    "key": key,
-                    "code": key,
+                    "key": event_key,
+                    "code": code,
                     "windowsVirtualKeyCode": vk_code,
                     "nativeVirtualKeyCode": vk_code,
+                    "modifiers": event_modifiers,
                 }
-                if text is not None:
+                if text is not None and event_key == "Space":
                     params["text"] = text
                 await ws.send(json.dumps({
                     "id": idx,
@@ -232,7 +308,7 @@ async def send_key_event(
                     "params": params,
                 }))
                 await ws.recv()
-            logger.debug("CDP key event completed successfully")
+            logger.debug("CDP keyboard chord completed successfully")
     except websockets.WebSocketException as exc:
         raise CDPError(f"WebSocket error: {exc}") from exc
     except OSError as exc:
@@ -254,14 +330,36 @@ def send_key_event_sync(
     Retries with exponential backoff on transient connection errors so a
     brief browser hiccup doesn't immediately fail the gesture.
     """
+    send_key_chord_sync(
+        host,
+        port,
+        key,
+        browser_exe_name=browser_exe_name,
+        target_id=target_id,
+        max_retries=max_retries,
+        base_delay=base_delay,
+    )
+
+
+def send_key_chord_sync(
+    host: str,
+    port: int,
+    chord: str,
+    browser_exe_name: Optional[str] = None,
+    target_id: Optional[str] = None,
+    *,
+    max_retries: int = 3,
+    base_delay: float = 0.5,
+) -> None:
+    """Synchronous retrying wrapper around :func:`send_key_chord`."""
     last_exc: Optional[Exception] = None
     for attempt in range(1, max_retries + 1):
         try:
             asyncio.run(
-                send_key_event(
+                send_key_chord(
                     host,
                     port,
-                    key,
+                    chord,
                     browser_exe_name=browser_exe_name,
                     target_id=target_id,
                 )
@@ -279,7 +377,7 @@ def send_key_event_sync(
                 )
                 time.sleep(delay)
             else:
-                logger.error("CDP key event failed after {} attempts: {}", max_retries, exc)
+                logger.error("CDP keyboard chord failed after {} attempts: {}", max_retries, exc)
     if last_exc:
         raise last_exc
 
