@@ -41,7 +41,16 @@ Media control for gamers. Pause/play, skip, and go back in YouTube Shorts (or an
      a simultaneous shortcut such as `Ctrl+L`, clear a binding to disable its gesture,
      then save and use **Test** to send it to the focused browser tab without pinning.
 
-6. **Use it**
+6. **Set up a Site Profile when a website needs different controls (optional)**
+
+   - Focus the website in your browser, then open **Settings → Quick Profile Setup**.
+   - GamerScroll creates the profile from the Generic Profile when needed, or opens the
+     existing profile for editing. One profile applies to the site's main domain and all
+     of its subdomains.
+   - Capture a binding, use **Test** to send it to the focused Profile Setup Target, then
+     save it. Site Profiles persist across restarts; a Pinned Tab does not.
+
+7. **Use it**
 
    - Open YouTube Shorts.
    - Focus your fullscreen game.
@@ -56,6 +65,8 @@ Media control for gamers. Pause/play, skip, and go back in YouTube Shorts (or an
 Output: `dist\GamerScroll.exe`
 
 Run it directly, or place it in your startup folder. You can also enable **Start with Windows** in the app settings.
+The build spec includes the Public Suffix List data required by Site Profiles, so always
+rebuild the executable after changing dependencies or the build spec.
 
 ## Settings file
 
@@ -140,6 +151,9 @@ In dev mode you can also print logs to the console:
 ```
 
 Useful log levels: `DEBUG`, `INFO`, `WARNING`, `ERROR`. You can also change the level permanently in **Settings → Logging**.
+
+If a frozen `.exe` reports a missing `tldextract\.tld_set_snapshot` file, close all
+running GamerScroll instances and rebuild with `powershell.exe -ExecutionPolicy Bypass -File .\scripts\build.ps1`.
 
 ## Files
 
