@@ -237,7 +237,28 @@ class Config:
         profiles = sanitize_site_profiles({domain: bindings})
         if not profiles:
             raise ValueError("A Site Profile needs a valid main domain.")
-        self.site_profiles[domain.lower().strip().rstrip(".")] = next(iter(profiles.values()))
+        self.site_profiles[self._normalized_site_profile_domain(domain)] = next(iter(profiles.values()))
+
+    def site_profile_domains(self) -> list[str]:
+        """Return saved Site Profile domains in a stable display order."""
+        return sorted(self.site_profiles)
+
+    def reset_site_profile(self, domain: str) -> None:
+        """Replace a saved Site Profile with a copy of Generic Profile bindings."""
+        normalized_domain = self._normalized_site_profile_domain(domain)
+        if normalized_domain not in self.site_profiles:
+            raise KeyError(f"No Site Profile saved for {normalized_domain or '(empty domain)'}.")
+        self.site_profiles[normalized_domain] = dict(self.generic_bindings)
+
+    def delete_site_profile(self, domain: str) -> bool:
+        """Delete a saved Site Profile and report whether one existed."""
+        normalized_domain = self._normalized_site_profile_domain(domain)
+        return self.site_profiles.pop(normalized_domain, None) is not None
+
+    @staticmethod
+    def _normalized_site_profile_domain(domain: str) -> str:
+        """Return the canonical storage key for a saved Site Profile domain."""
+        return domain.lower().strip().rstrip(".")
 
     def save(self, path: Path | None = None) -> None:
         if path is None:

@@ -135,6 +135,8 @@ class GamerScrollApp:
                 self.controller.test_site_profile_binding
             )
             self.settings_window.site_profile_save_requested.connect(self._save_site_profile)
+            self.settings_window.site_profile_reset_requested.connect(self._reset_site_profile)
+            self.settings_window.site_profile_delete_requested.connect(self._delete_site_profile)
             self.settings_window.pin_current_tab_requested.connect(self._pin_current_tab)
             self.settings_window.unpin_current_tab_requested.connect(self._unpin_current_tab)
             self.settings_window.destroyed.connect(lambda: setattr(self, "settings_window", None))
@@ -197,6 +199,38 @@ class GamerScrollApp:
         self.tray.set_status(f"Saved Site Profile: {domain}")
         if self.settings_window is not None:
             self.settings_window.set_status(f"Saved Site Profile: {domain}")
+
+    def _reset_site_profile(self, domain: str) -> None:
+        """Reset a saved Site Profile to the current Generic Profile bindings."""
+        try:
+            self.controller.reset_site_profile(domain)
+            self.config.save()
+        except (OSError, KeyError) as exc:
+            logger.warning("Could not reset Site Profile {}: {}", domain, exc)
+            self.tray.set_status("Could not reset Site Profile")
+            if self.settings_window is not None:
+                self.settings_window.show_site_profile_error("Could not reset Site Profile", str(exc))
+            return
+        self.tray.set_status(f"Reset Site Profile: {domain}")
+        if self.settings_window is not None:
+            self.settings_window.set_status(f"Reset Site Profile: {domain}")
+
+    def _delete_site_profile(self, domain: str) -> None:
+        """Delete a saved Site Profile so the domain uses Generic Profile."""
+        try:
+            deleted = self.controller.delete_site_profile(domain)
+            if not deleted:
+                return
+            self.config.save()
+        except OSError as exc:
+            logger.warning("Could not delete Site Profile {}: {}", domain, exc)
+            self.tray.set_status("Could not delete Site Profile")
+            if self.settings_window is not None:
+                self.settings_window.show_site_profile_error("Could not delete Site Profile", str(exc))
+            return
+        self.tray.set_status(f"Deleted Site Profile: {domain}")
+        if self.settings_window is not None:
+            self.settings_window.set_status(f"Deleted Site Profile: {domain}")
 
     def _on_pin_changed(self, pinned_tab: Optional[TabTarget]) -> None:
         """Queue pin-status changes onto the Settings window's Qt thread."""

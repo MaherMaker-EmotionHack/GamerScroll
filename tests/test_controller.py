@@ -405,3 +405,50 @@ def test_unmatched_site_uses_generic_profile_when_other_profiles_exist() -> None
     controller.handle_gesture(Gesture.SHORT_PRESS)
 
     assert sender.actions == [SentAction("Space", None, "active-id")]
+
+
+def test_saved_site_profiles_can_be_listed_reset_and_deleted() -> None:
+    config = Config(
+        generic_bindings={
+            "short_press": "Space",
+            "double_press": None,
+            "long_hold": "ArrowUp",
+        },
+        site_profiles={
+            "youtube.com": {
+                "short_press": "K",
+                "double_press": "J",
+                "long_hold": "Shift+P",
+            },
+            "vimeo.com": {
+                "short_press": "Space",
+                "double_press": "ArrowDown",
+                "long_hold": "ArrowUp",
+            },
+        },
+    )
+    controller = MediaController(config)
+
+    assert controller.list_site_profile_domains() == ["vimeo.com", "youtube.com"]
+
+    controller.reset_site_profile("youtube.com")
+
+    assert config.site_profiles["youtube.com"] == config.generic_bindings
+    assert controller.delete_site_profile("youtube.com") is True
+    assert controller.list_site_profile_domains() == ["vimeo.com"]
+
+
+def test_deleted_site_profile_falls_back_to_generic_bindings() -> None:
+    active_tab = TabTarget("active-id", "YouTube", "https://www.youtube.com/shorts/1")
+    config = Config(site_profiles={
+        "youtube.com": {
+            "short_press": "K",
+            "double_press": None,
+            "long_hold": "Shift+P",
+        }
+    })
+    controller = MediaController(config)
+
+    assert controller.resolve_binding(Gesture.SHORT_PRESS, active_tab) == "K"
+    assert controller.delete_site_profile("youtube.com") is True
+    assert controller.resolve_binding(Gesture.SHORT_PRESS, active_tab) == "Space"

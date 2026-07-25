@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -147,7 +148,7 @@ def capture_chord(label: str, target: QLineEdit, parent: QWidget) -> None:
 
 
 class SiteProfileDialog(QDialog):
-    """Edit the Site Profile selected by Quick Profile Setup."""
+    """Edit a Site Profile from Quick Setup or Profile Management."""
 
     binding_test_requested = pyqtSignal(str)
     profile_saved = pyqtSignal(str, object)
@@ -161,15 +162,23 @@ class SiteProfileDialog(QDialog):
 
         layout = QVBoxLayout(self)
         target_label = QLabel(
-            f"Profile Setup Target: <b>{setup.target.title or setup.domain}</b><br>"
-            f"Main domain: <b>{setup.domain}</b>"
+            (
+                f"Profile Setup Target: <b>{setup.target.title or setup.domain}</b><br>"
+                f"Main domain: <b>{setup.domain}</b>"
+            )
+            if setup.target is not None
+            else f"Saved Site Profile<br>Main domain: <b>{setup.domain}</b>"
         )
         target_label.setWordWrap(True)
         layout.addWidget(target_label)
 
         help_label = QLabel(
             "Capture one page-level key or a simultaneous shortcut for each gesture. "
-            "Test sends the captured binding to this Profile Setup Target before saving."
+            + (
+                "Test sends the captured binding to this Profile Setup Target before saving."
+                if setup.target is not None
+                else "This saved profile can be maintained without opening its website."
+            )
         )
         help_label.setWordWrap(True)
         layout.addWidget(help_label)
@@ -189,15 +198,16 @@ class SiteProfileDialog(QDialog):
             )
             clear_btn = QPushButton("Clear")
             clear_btn.clicked.connect(edit.clear)
-            test_btn = QPushButton("Test")
-            test_btn.clicked.connect(
-                lambda _checked=False, field=edit: self.binding_test_requested.emit(field.text().strip())
-            )
             row = QHBoxLayout()
             row.addWidget(edit)
             row.addWidget(capture_btn)
             row.addWidget(clear_btn)
-            row.addWidget(test_btn)
+            if setup.target is not None:
+                test_btn = QPushButton("Test")
+                test_btn.clicked.connect(
+                    lambda _checked=False, field=edit: self.binding_test_requested.emit(field.text().strip())
+                )
+                row.addWidget(test_btn)
             bindings_layout.addRow(labels[binding_name], row)
             self._binding_edits[binding_name] = edit
         layout.addLayout(bindings_layout)
@@ -224,6 +234,101 @@ class SiteProfileDialog(QDialog):
         self.accept()
 
 
+class ProfileManagementDialog(QDialog):
+    """List saved Site Profiles and expose their lifecycle actions."""
+
+    profile_edit_requested = pyqtSignal(str)
+    profile_reset_requested = pyqtSignal(str)
+    profile_delete_requested = pyqtSignal(str)
+
+    def __init__(
+        self,
+        profiles: dict[str, dict[str, str | None]],
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Profile Management")
+        self.setMinimumWidth(420)
+        layout = QVBoxLayout(self)
+        help_label = QLabel(
+            "Saved Site Profiles apply automatically by main domain. Select one to edit, "
+            "reset it to Generic Profile bindings, or delete it."
+        )
+        help_label.setWordWrap(True)
+        layout.addWidget(help_label)
+        self._profiles = QListWidget()
+        self._profiles.currentItemChanged.connect(self._update_actions)
+        layout.addWidget(self._profiles)
+
+        actions = QHBoxLayout()
+        self._open_btn = QPushButton("Open")
+        self._open_btn.clicked.connect(self._open_selected)
+        self._reset_btn = QPushButton("Reset to Generic")
+        self._reset_btn.clicked.connect(self._reset_selected)
+        self._delete_btn = QPushButton("Delete")
+        self._delete_btn.clicked.connect(self._delete_selected)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        actions.addWidget(self._open_btn)
+        actions.addWidget(self._reset_btn)
+        actions.addWidget(self._delete_btn)
+        actions.addStretch()
+        actions.addWidget(close_btn)
+        layout.addLayout(actions)
+        self.set_profiles(profiles)
+
+    def set_profiles(
+        self,
+        profiles: dict[str, dict[str, str | None]],
+        selected_domain: str | None = None,
+    ) -> None:
+        """Refresh the visible saved domains after a lifecycle action."""
+        self._profiles.clear()
+        for domain in sorted(profiles):
+            self._profiles.addItem(domain)
+        if selected_domain:
+            matches = self._profiles.findItems(selected_domain, Qt.MatchFlag.MatchExactly)
+            if matches:
+                self._profiles.setCurrentItem(matches[0])
+        if self._profiles.currentItem() is None and self._profiles.count():
+            self._profiles.setCurrentRow(0)
+        self._update_actions()
+
+    def _selected_domain(self) -> str | None:
+        item = self._profiles.currentItem()
+        return item.text() if item is not None else None
+
+    def _update_actions(self) -> None:
+        enabled = self._selected_domain() is not None
+        self._open_btn.setEnabled(enabled)
+        self._reset_btn.setEnabled(enabled)
+        self._delete_btn.setEnabled(enabled)
+
+    def _open_selected(self) -> None:
+        domain = self._selected_domain()
+        if domain is not None:
+            self.profile_edit_requested.emit(domain)
+
+    def _reset_selected(self) -> None:
+        domain = self._selected_domain()
+        if domain is not None:
+            self.profile_reset_requested.emit(domain)
+
+    def _delete_selected(self) -> None:
+        domain = self._selected_domain()
+        if domain is None:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Delete Site Profile?",
+            f"Delete the Site Profile for {domain}? Future controls for this domain will use Generic Profile.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.profile_delete_requested.emit(domain)
+
+
 class SettingsWindow(QWidget):
     """Main settings window."""
 
@@ -233,6 +338,8 @@ class SettingsWindow(QWidget):
     quick_profile_setup_requested = pyqtSignal()
     site_profile_binding_test_requested = pyqtSignal(str)
     site_profile_save_requested = pyqtSignal(str, object)
+    site_profile_reset_requested = pyqtSignal(str)
+    site_profile_delete_requested = pyqtSignal(str)
     pin_current_tab_requested = pyqtSignal()
     unpin_current_tab_requested = pyqtSignal()
     pin_status_changed = pyqtSignal(object)
@@ -383,6 +490,10 @@ class SettingsWindow(QWidget):
         quick_setup_btn.setToolTip("Configure the profile for the focused browser tab")
         quick_setup_btn.clicked.connect(self.quick_profile_setup_requested.emit)
         site_profile_layout.addRow("", quick_setup_btn)
+        manage_profiles_btn = QPushButton("Manage Saved Profiles")
+        manage_profiles_btn.setToolTip("Edit, reset, or delete saved Site Profiles")
+        manage_profiles_btn.clicked.connect(self.show_profile_management)
+        site_profile_layout.addRow("", manage_profiles_btn)
         layout.addWidget(site_profile_group)
 
         # Gesture timing group
@@ -561,6 +672,32 @@ class SettingsWindow(QWidget):
         dialog.binding_test_requested.connect(self.site_profile_binding_test_requested.emit)
         dialog.profile_saved.connect(self.site_profile_save_requested.emit)
         dialog.exec()
+
+    def show_profile_management(self) -> None:
+        """Open the lifecycle controls for all saved Site Profiles."""
+        dialog = ProfileManagementDialog(self._config.site_profiles, self)
+        dialog.profile_edit_requested.connect(self._open_managed_site_profile)
+        dialog.profile_reset_requested.connect(
+            lambda domain: self._reset_managed_site_profile(domain, dialog)
+        )
+        dialog.profile_delete_requested.connect(
+            lambda domain: self._delete_managed_site_profile(domain, dialog)
+        )
+        dialog.exec()
+
+    def _open_managed_site_profile(self, domain: str) -> None:
+        bindings = self._config.site_profiles.get(domain)
+        if bindings is None:
+            return
+        self.show_site_profile_setup(SiteProfileSetup(None, domain, dict(bindings)))
+
+    def _reset_managed_site_profile(self, domain: str, dialog: ProfileManagementDialog) -> None:
+        self.site_profile_reset_requested.emit(domain)
+        dialog.set_profiles(self._config.site_profiles, domain)
+
+    def _delete_managed_site_profile(self, domain: str, dialog: ProfileManagementDialog) -> None:
+        self.site_profile_delete_requested.emit(domain)
+        dialog.set_profiles(self._config.site_profiles)
 
     def _update_warning_visibility(self) -> None:
         self._auto_launch_warning.setVisible(self._auto_launch_check.isChecked())

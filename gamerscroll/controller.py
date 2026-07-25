@@ -47,9 +47,9 @@ class TabTarget:
 
 @dataclass(frozen=True)
 class SiteProfileSetup:
-    """The active tab and editable bindings used by Quick Profile Setup."""
+    """The optional setup target and editable bindings used by a Site Profile editor."""
 
-    target: TabTarget
+    target: TabTarget | None
     domain: str
     bindings: dict[str, str | None]
 
@@ -285,6 +285,21 @@ class MediaController:
         """Update the persistent Site Profile selected by Quick Profile Setup."""
         with self._lock:
             self._config.set_site_profile(domain, bindings)
+
+    def list_site_profile_domains(self) -> list[str]:
+        """List saved Site Profiles for the management page."""
+        with self._lock:
+            return self._config.site_profile_domains()
+
+    def reset_site_profile(self, domain: str) -> None:
+        """Reset one saved Site Profile to the current Generic Profile bindings."""
+        with self._lock:
+            self._config.reset_site_profile(domain)
+
+    def delete_site_profile(self, domain: str) -> bool:
+        """Delete one saved Site Profile so future controls use Generic Profile."""
+        with self._lock:
+            return self._config.delete_site_profile(domain)
 
     @property
     def pinned_tab(self) -> Optional[TabTarget]:
