@@ -3,6 +3,8 @@
 import sys
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_data_files
+
 block_cipher = None
 
 root = Path(SPECPATH).resolve()
@@ -13,6 +15,7 @@ a = Analysis(
     binaries=[],
     datas=[
         (str(root / 'assets' / 'icon.ico'), 'assets'),
+        *collect_data_files('tldextract'),
     ],
     hiddenimports=[
         'win32api',
