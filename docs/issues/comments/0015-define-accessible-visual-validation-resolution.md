@@ -7,7 +7,8 @@ This contract defines the acceptance checks for the **Control Deck** and the con
 - The Control Deck preserves this reading and tab order: **readiness**, **Control target**, **Gesture map**, then Site Profile context and secondary setup. A user can determine whether GamerScroll is ready, where the next Gesture will be sent, and the current bindings without relying on color, hover, or tooltips.
 - Every interactive control is reachable with `Tab` and `Shift+Tab`, operable with `Enter` and `Space`, and exposes a programmatic role, accessible name, and state through Windows accessibility APIs. Standard Qt controls may provide the role; the application supplies the visible text or accessible name.
 - Focus never disappears. The focused control has a 2 px visual boundary with at least 3:1 contrast against adjacent colors. The boundary remains visible when the accent is unavailable or indistinguishable by combining the accent with a neutral outline, fill change, or both.
-- Status is always conveyed by a plain-language label and a familiar status icon as well as a semantic color. `Ready`, `Listening disabled`, `Browser unavailable`, `Pinned Tab unavailable`, and `Setup required` are not color-only states.
+- Status is always conveyed by a plain-language label and a familiar status icon as well as a semantic color. `Checking browser connection`, `Ready`, `Listening disabled`, `Browser unavailable`, `Pinned Tab unavailable`, and `Setup required` are not color-only states.
+- During loading, readiness announces `Checking browser connection` and exposes an indeterminate progress state without suggesting that control is ready. Before browser setup or when no browser target is available, readiness announces `Setup required` and offers `Complete browser setup` as its one recovery action.
 - When a Pinned Tab disappears, GamerScroll silently routes the next Gesture to the active browser tab without interrupting play. When the Control Deck is viewed, its `Pinned Tab unavailable` state says that control returned to the active browser tab and exposes `Pin Current Tab` as its single recovery action.
 - Keyboard Chords use `Cascadia Mono` or the system monospace fallback. All other UI text uses `Segoe UI Variable`, `Segoe UI`, then the system UI fallback. Icons supplement a text label; they do not replace it.
 - Page-level Keyboard Chords remain the only binding transport. The contract must not describe `F11`, ordered key sequences, browser-chrome shortcuts, or operating-system controls as available Gesture Bindings.
@@ -20,6 +21,8 @@ The following names are the required accessible names. Their visible labels may 
 | --- | --- | --- |
 | Window navigation | Control, Profiles, Input & timing, Advanced | Each is exposed as a tab with its selected state. Arrow keys move between tabs when the tab strip has focus; `Enter` or `Space` activates the focused tab. |
 | Readiness | Contextual recovery action | Name the specific action, for example `Reconnect browser`, `Complete browser setup`, or `Enable listening`. The name does not use a generic `Fix` or `Retry` label. The action appears after status text in tab order. |
+| Readiness | Loading state | `Checking browser connection`, exposed as an indeterminate progress state. It is not interactive and does not announce ready controls. |
+| Readiness | Empty setup state | `Setup required: select a browser and Chromium Profile to begin`. Its sole recovery action is `Complete browser setup`. |
 | Control target | Pin Current Tab | `Pin current tab: <title>, <main domain>` when a focused tab is available. Activation pins that tab for the current session. |
 | Control target | Unpin | `Unpin current control target: <title>, <main domain>`. It is unavailable when no Pinned Tab exists. |
 | Control target | Target mode and details | A non-interactive summary announces either `Pinned this session` or `Active browser tab`, followed by title, main domain, browser, and Chromium Profile. It is not announced as a button or tab picker. |
@@ -27,6 +30,7 @@ The following names are the required accessible names. Their visible labels may 
 | Gesture map | Test | `Test <Gesture> binding on <Profile Setup Target title>, <main domain>`. It is disabled with an explanatory tooltip and accessible description when no Profile Setup Target is available. It must state that it ignores the Pinned Tab. |
 | Profile context | Quick Profile Setup | `Quick Profile Setup for focused browser tab`. It opens or proposes the Site Profile for the Profile Setup Target without changing the Pinned Tab. |
 | Profile context | Manage profiles | `Manage saved Site Profiles`. |
+| Profile context | Active profile summary | A non-interactive summary announces either `Generic Profile: used for sites without a Site Profile` or `Site Profile: <main domain>: used for this domain and its subdomains`. |
 | Profile editor | Binding Label | `<Gesture> Binding Label`. Blank is valid and is announced as `No label`. |
 | Profile editor | Keyboard Chord | `<Gesture> Keyboard Chord`, read-only. It announces the captured chord or `Unassigned`; it is not presented as editable text. |
 | Profile editor | Capture | `Capture <Gesture> Keyboard Chord`. While capture is active, instructions identify `Escape` as cancel and exclude ordered sequences and text entry. |
@@ -78,9 +82,10 @@ For each supported theme and scaling combination, capture the following evidence
 
 1. Keyboard traversal from window entry through the final Control Deck action and back, including visible focus, disabled controls, a modal confirmation, and return focus.
 2. A screen-reader or Windows accessibility-inspection pass that verifies the names and states in the Keyboard And Accessible Names table, including the current readiness state, target mode, each Gesture row, and all tray menu actions.
-3. Screenshots of ready, disabled, Browser unavailable (CDP), and missing-Pinned-Tab states that show an icon, plain-language label, and contextual recovery action without relying on color. The missing-Pinned-Tab state explicitly states that control returned to the active browser tab and offers only `Pin Current Tab`.
+3. Screenshots of loading, empty setup, ready, disabled, Browser unavailable (CDP), and missing-Pinned-Tab states that show an icon, plain-language label, and contextual recovery action without relying on color. The missing-Pinned-Tab state explicitly states that control returned to the active browser tab and offers only `Pin Current Tab`.
 4. Contrast measurements for every token pairing used by text and essential controls in Light and Dark, plus a Windows contrast-theme screenshot proving that system colors override custom theme colors.
 5. Screenshots at every required text and display scaling level showing readiness, Control target, and Gesture map in that order, with no clipping or overlapping controls.
 6. A 16 px notification-area check of the monochrome Gesture Wheel against light, dark, and Windows contrast backgrounds.
+7. Generic Profile and Site Profile screenshots and accessibility-inspection output proving that the profile type, Site Profile main-domain scope, and per-row profile source are available without color or visual inference.
 
 This contract is an input to the [GamerScroll redesign specification](../0007-write-gamerscroll-redesign-specification.md).
