@@ -8,6 +8,7 @@ This contract defines the acceptance checks for the **Control Deck** and the con
 - Every interactive control is reachable with `Tab` and `Shift+Tab`, operable with `Enter` and `Space`, and exposes a programmatic role, accessible name, and state through Windows accessibility APIs. Standard Qt controls may provide the role; the application supplies the visible text or accessible name.
 - Focus never disappears. The focused control has a 2 px visual boundary with at least 3:1 contrast against adjacent colors. The boundary remains visible when the accent is unavailable or indistinguishable by combining the accent with a neutral outline, fill change, or both.
 - Status is always conveyed by a plain-language label and a familiar status icon as well as a semantic color. `Ready`, `Listening disabled`, `Browser unavailable`, `Pinned Tab unavailable`, and `Setup required` are not color-only states.
+- When a Pinned Tab disappears, GamerScroll silently routes the next Gesture to the active browser tab without interrupting play. When the Control Deck is viewed, its `Pinned Tab unavailable` state says that control returned to the active browser tab and exposes `Pin Current Tab` as its single recovery action.
 - Keyboard Chords use `Cascadia Mono` or the system monospace fallback. All other UI text uses `Segoe UI Variable`, `Segoe UI`, then the system UI fallback. Icons supplement a text label; they do not replace it.
 - Page-level Keyboard Chords remain the only binding transport. The contract must not describe `F11`, ordered key sequences, browser-chrome shortcuts, or operating-system controls as available Gesture Bindings.
 
@@ -39,6 +40,7 @@ The following names are the required accessible names. Their visible labels may 
 | Advanced | Launch or restart browser | `Restart <browser> with CDP enabled`. It is never the default action. Confirmation names the browser, warns that existing browser windows will close, and offers `Restart browser` and `Cancel`. |
 | Window actions | Save, Cancel, Close | Each has its visible label as its accessible name. `Escape` closes a modal editor without saving. Saving returns focus to the invoking control and announces the resulting status. |
 | Tray activation | Open Control Deck | A primary tray activation opens the Control Deck. The tray tooltip identifies GamerScroll plus its current textual state. |
+| Tray keyboard navigation | Tray menu | When the native tray menu has focus, `Up` and `Down` move through enabled items, `Enter` or `Space` activates the focused item, and `Escape` closes the menu. Standard Windows access to the notification area remains responsible for reaching the tray icon; GamerScroll does not replace it with a custom flyout. |
 | Tray menu | Enable or Disable | The action is named `Enable GamerScroll` when disabled and `Disable GamerScroll` when listening. The menu never uses `Pause`. |
 | Tray menu | Launch Browser | `Launch browser with CDP enabled`. If it would close browser windows, it opens the same named confirmation used by Advanced. |
 | Tray menu | Settings | `Open GamerScroll settings`. |
@@ -48,7 +50,7 @@ The following names are the required accessible names. Their visible labels may 
 
 | Mode | Required behavior |
 | --- | --- |
-| System | Follows the Windows application light/dark preference. Changes apply without hiding status, focus, or hierarchy. |
+| System | The default preference. Follows the Windows application light/dark preference. Changes apply without hiding status, focus, or hierarchy. |
 | Light | Uses the Gaming Companion light neutrals: canvas `#F3F3F3`, surface `#FFFFFF`, subtle surface `#F8F8F8`, divider `#DEDEDE`, primary text `#242424`, and secondary text `#707070`. |
 | Dark | Uses the Gaming Companion dark neutrals: canvas `#1E1E23`, surface `#25252B`, subtle surface `#2D2D34`, divider `#42424B`, primary text `#F4F4F6`, and secondary text `#B8B8C0`. |
 | Windows contrast theme | Defers all essential foreground, background, selection, and focus colors to the active Windows contrast palette. Do not force custom canvas, graphite, accent, semantic-color, or disabled-opacity values that obscure system colors. Borders, icons, and the Gesture Wheel use current foreground/background colors. |
@@ -76,7 +78,7 @@ For each supported theme and scaling combination, capture the following evidence
 
 1. Keyboard traversal from window entry through the final Control Deck action and back, including visible focus, disabled controls, a modal confirmation, and return focus.
 2. A screen-reader or Windows accessibility-inspection pass that verifies the names and states in the Keyboard And Accessible Names table, including the current readiness state, target mode, each Gesture row, and all tray menu actions.
-3. Screenshots of ready, disabled, unavailable-CDP, and missing-Pinned-Tab states that show an icon, plain-language label, and contextual recovery action without relying on color.
+3. Screenshots of ready, disabled, Browser unavailable (CDP), and missing-Pinned-Tab states that show an icon, plain-language label, and contextual recovery action without relying on color. The missing-Pinned-Tab state explicitly states that control returned to the active browser tab and offers only `Pin Current Tab`.
 4. Contrast measurements for every token pairing used by text and essential controls in Light and Dark, plus a Windows contrast-theme screenshot proving that system colors override custom theme colors.
 5. Screenshots at every required text and display scaling level showing readiness, Control target, and Gesture map in that order, with no clipping or overlapping controls.
 6. A 16 px notification-area check of the monochrome Gesture Wheel against light, dark, and Windows contrast backgrounds.
