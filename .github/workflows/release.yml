@@ -70,11 +70,19 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: dist/GamerScroll.exe
+          draft: true
+          files: |
+            dist/GamerScroll.exe
+            LICENSE
+            NOTICE
+            THIRD_PARTY_NOTICES.md
           body: |
             ## Download
 
             Download `GamerScroll.exe` from the assets below.
+
+            This draft requires the dependency-license and corresponding-source
+            review in THIRD_PARTY_NOTICES.md before publication.
 
             **SHA256:** `${{ steps.sha.outputs.sha256 }}`
         env:

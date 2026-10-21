@@ -71,6 +71,15 @@ logs/
 # Local config / secrets
 .env
 .env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+# Dedicated local browser data and unsanitized development artifacts
+local-browser-profile/
+local-artifacts/
 config.local.json
 *.local.json
 secrets.json

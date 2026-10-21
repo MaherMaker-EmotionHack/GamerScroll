@@ -1,5 +1,9 @@
 # Future Plans
 
+The active development sequence is in [ROADMAP.md](ROADMAP.md): CLI access to the
+current media-control core comes first, with MCP considered later. The extension
+proposal below remains shelved.
+
 ## Extension-based approach (on hold)
 
 A browser-extension relay could let GamerScroll control the browser without launching it with `--remote-debugging-port`. We explored this in an earlier version and kept it out of the main app for now because Comet's internal `ExtensionsSettings` policy blocks content-script/scripting injection on some sites (e.g. YouTube).
