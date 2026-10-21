@@ -2,7 +2,26 @@
 
 Media control for gamers. Pause/play, skip, and go back in YouTube Shorts (or any browser tab) with a single Logitech mouse button while a fullscreen game has focus — no alt-tabbing required.
 
+## Requirements
+
+- Windows, with Python 3.10 or newer and Git installed. CI uses Python 3.12.
+- A supported Chromium browser; see [Browser support](#browser-support).
+- For mouse gestures, a mouse-button mapping that emits the Media Key (for example,
+  Logitech G HUB mapped to `F13`).
+
+The current application is a Python/PyQt6 tray utility using `pynput`, `pywin32`,
+`requests`, `websockets`, `loguru`, and `tldextract`. Linux and macOS are not supported
+by the current Windows integration.
+
 ## Quick start
+
+Open PowerShell. Clone the repository and create a virtual environment:
+
+```powershell
+git clone https://github.com/MaherMaker-EmotionHack/GamerScroll.git
+cd GamerScroll
+py -3 -m venv .venv
+```
 
 1. **Install dependencies**
 
@@ -38,7 +57,7 @@ Media control for gamers. Pause/play, skip, and go back in YouTube Shorts (or an
      - **Long hold** → Prev
    - Adjust **Hold threshold**, **Double-click window**, and **Debounce** to tune the feel.
    - The Generic Profile applies when a site has no Site Profile. Capture one key or
-     a simultaneous shortcut such as `Ctrl+L`, clear a binding to disable its gesture,
+     a simultaneous page shortcut such as `Shift+N`, clear a binding to disable its gesture,
      then save and use **Test** to send it to the focused browser tab without pinning.
 
 6. **Set up a Site Profile when a website needs different controls (optional)**
@@ -58,7 +77,10 @@ Media control for gamers. Pause/play, skip, and go back in YouTube Shorts (or an
 
 ## Build a single `.exe`
 
+Install the development/build dependencies first:
+
 ```powershell
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\scripts\build.ps1
 ```
 
@@ -67,6 +89,20 @@ Output: `dist\GamerScroll.exe`
 Run it directly, or place it in your startup folder. You can also enable **Start with Windows** in the app settings.
 The build spec includes the Public Suffix List data required by Site Profiles, so always
 rebuild the executable after changing dependencies or the build spec.
+
+Before sharing a binary, follow the source and dependency-license checklist in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Development checks
+
+```powershell
+.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.venv\Scripts\python.exe -m mypy gamerscroll
+.venv\Scripts\python.exe -m pytest tests/ -v
+```
+
+GitHub Actions runs these checks and builds the Windows executable. A separate
+job scans the full fetched Git history with Gitleaks.
 
 ## Settings file
 
@@ -183,13 +219,44 @@ running GamerScroll instances and rebuild with `powershell.exe -ExecutionPolicy 
 | `FUTURE.md` | Future ideas, including the shelved extension approach. |
 | `requirements.txt` | Python dependencies. |
 
-## Future ideas
+## Roadmap
 
-See `FUTURE.md` for planned or shelved ideas, including the browser-extension relay approach.
+The next planned development phase is a headless CLI for the existing media-control
+services, with structured results that people and agents can use. This is planned
+work: the current `python -m gamerscroll` entry point starts the tray application
+and supports logging flags only.
+
+See [ROADMAP.md](ROADMAP.md) for the 26–38 hour implementation plan and acceptance
+criteria. An MCP adapter is a later possibility. Existing UI redesign proposals
+remain separate from this phase. Shelved extension ideas remain in
+[FUTURE.md](FUTURE.md).
+
+## Privacy during development
+
+Use a dedicated browser profile and fictional local test pages for development,
+recordings, and issue reports. Current diagnostics can include tab titles, domains,
+and debugger addresses; user-path redaction does not sanitize those values. Inspect
+logs and screenshots before sharing them. Keep browser data in the ignored
+`local-browser-profile/` directory and unsanitized artifacts in `local-artifacts/`.
+Keep `.env`, tokens, private keys, cookies, and browser profiles out of Git.
+GamerScroll does not require an AI API key.
+
+## Ownership and license
+
+GamerScroll is personally owned and maintained by
+[MaherMaker-EmotionHack](https://github.com/MaherMaker-EmotionHack).
+Existing commits are attributed to the owner's `MaherTheMaker` account.
+
+Copyright (C) 2026 MaherMaker-EmotionHack. Licensed under **GPL-3.0-only**;
+see [LICENSE](LICENSE), [NOTICE](NOTICE), and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+Project-submission preparation and checks are recorded in
+[docs/submission-readiness.md](docs/submission-readiness.md).
 
 ## Known limitations
 
 - The browser must be launched with `--remote-debugging-port=<port>`. The app can do this automatically, but it will close existing browser windows first.
-- Media commands target the active/focused browser tab. If you switch tabs, you may need to click the desired tab first.
+- Media commands prefer a session-only Pinned Tab; otherwise they resolve the active browser tab, with a first-page fallback if it cannot be identified.
 - Optimized for YouTube Shorts. Other reel sites (Instagram, Facebook) may not respond to the same keys.
 - Bindings are page-level only. Browser UI shortcuts such as `Ctrl+N` and `Ctrl+D` cannot be triggered through CDP page input.

@@ -1,5 +1,8 @@
 # GamerScroll — Plan
 
+This document records the original architecture and rationale. For the next
+implementation phase and its acceptance criteria, use [ROADMAP.md](ROADMAP.md).
+
 ## Goal
 A small Windows system-tray app that controls media playback (pause/play, next, prev) in a background Chromium browser tab while a fullscreen game has focus — no alt-tab, no losing the game's input.
 

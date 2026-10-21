@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,12 @@ name = "gamerscroll"
 version = "0.2.0"
 description = "Media control for gamers via Chrome DevTools Protocol"
 requires-python = ">=3.10"
+license = "GPL-3.0-only"
+license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"]
+readme = "README.md"
+classifiers = [
+    "Operating System :: Microsoft :: Windows",
+]
 dependencies = [
     "pynput>=1.7.6",
     "pywin32>=306",
@@ -17,6 +23,10 @@ dependencies = [
     "tldextract>=5.1.2",
 ]
 
+[project.urls]
+Repository = "https://github.com/MaherMaker-EmotionHack/GamerScroll"
+Issues = "https://github.com/MaherMaker-EmotionHack/GamerScroll/issues"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
@@ -24,6 +34,10 @@ dev = [
     "mypy>=1.8.0",
     "types-requests>=2.31.0",
 ]
+
+[tool.setuptools.packages.find]
+include = ["gamerscroll*"]
+namespaces = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -2,9 +2,11 @@
 
 ## Project overview
 
-GamerScroll is a **Windows-only Python/PyQt6 system-tray application** that scrolls a background Chromium-based browser (Chrome, Edge, Brave, Comet) while a fullscreen game has focus. It works by listening to global hotkeys (mapped from Logitech G HUB to phantom F13/F14 keys) and sending scroll commands through the browser's **Chrome DevTools Protocol (CDP)**.
+GamerScroll is a **Windows-only Python/PyQt6 system-tray application** that sends page-level media controls to a background Chromium browser (Chrome, Edge, Brave, Comet) while a fullscreen game has focus. One Media Key (default F13, mapped from Logitech G HUB) resolves to Short Press, Double Press, or Long Hold. Site Profiles or Generic Profile bindings select the Keyboard Chord sent through **Chrome DevTools Protocol (CDP)**.
 
 - User docs and setup: [`README.md`](./README.md)
+- For CLI/core/IPC work or prioritization, read [`ROADMAP.md`](./ROADMAP.md): it defines the next phase and keeps CLI/MCP proposals distinct from shipped behavior.
+- Before submissions or binary redistribution, read [`docs/submission-readiness.md`](./docs/submission-readiness.md) and [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md).
 - Design rationale and abandoned approaches: [`PLAN.md`](./PLAN.md)
 - Shelved extension-based relay: [`FUTURE.md`](./FUTURE.md)
 - Extension research template: [`RESEARCH_BRIEF_EXTENSIONS.md`](./RESEARCH_BRIEF_EXTENSIONS.md)
@@ -72,13 +74,13 @@ Regenerate the icon:
 ## Common pitfalls
 
 - **Browser must run with `--remote-debugging-port=<port>`**. Auto-launch in `browser.py` closes existing browser windows first; warn users about losing unsaved work.
-- **CDP media commands target the active/focused tab**. If the user switches tabs, they must click the desired tab first.
+- **Normal dispatch prefers the session-only Pinned Tab**, falling back to the active browser page when the pin is lost. Binding Test uses the Profile Setup Target and ignores the pin. Keep those routes distinct.
 - **YouTube Shorts uses `Space` for pause/play and arrow keys for navigation**, so `cdp.py` sends `Input.dispatchKeyEvent` pairs for those keys.
 - **Gesture timing is configurable** via `hold_threshold_ms`, `double_click_window_ms`, and `debounce_ms` in `Config`.
 - **Long hold fires at the threshold mark**, not on release; keep the timer logic in `gestures.py` consistent with that contract.
 - **Single-instance mutex** (`Global\GamerScrollSingleInstanceMutex`) prevents two copies from running.
 - **pynput key names are lowercase**; the GUI normalizes captured keys to lowercase (`keyboard.Key[key_name]`).
-- **Logs redact the Windows user profile path** and are written to `%APPDATA%\GamerScroll\logs\gamerscroll.log`.
+- **Logs redact the Windows user profile path**, but can still expose tab titles and debugger addresses. Use fictional pages and a dedicated browser profile; sanitize diagnostics before sharing.
 
 ## Extension / future work
 
